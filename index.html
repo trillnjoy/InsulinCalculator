@@ -89,7 +89,7 @@ body{
   display:flex;align-items:center;gap:9px;
   font-size:12px;color:var(--ink-soft);
   background:var(--card);border:1px solid var(--line);
-  border-radius:10px;padding:9px 12px;margin-bottom:16px;
+  border-radius:10px;padding:9px 12px;margin:24px 0 16px;
 }
 .dot{width:8px;height:8px;border-radius:50%;background:var(--safe);box-shadow:0 0 0 3px var(--safe-wash)}
 .mode b{color:var(--ink);font-weight:600}
@@ -126,10 +126,10 @@ body{
 .input-label .hint{font-size:11.5px;color:var(--ink-faint);margin-top:2px}
 .input-label .hint:empty{display:none}
 .input-label .hint.cap{color:var(--advisory);font-weight:600}
-.field{position:relative;width:128px;flex:none}
+.field{position:relative;width:136px;flex:none}
 .field input{
   width:100%;font-family:var(--mono);font-size:22px;font-weight:600;text-align:right;
-  padding:10px 42px 10px 12px;border:1.5px solid var(--line-strong);border-radius:10px;
+  padding:10px 56px 10px 12px;border:1.5px solid var(--line-strong);border-radius:10px;
   background:#fcfdfd;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s;
 }
 .field input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-wash)}
@@ -275,11 +275,6 @@ select.set-input{font-family:var(--sans);font-weight:500}
 
 <div class="wrap">
 
-  <div class="mode" id="modeBanner">
-    <span class="dot"></span>
-    <span><b>Standalone mode.</b> Parameters entered manually below — not connected to an EHR order.</span>
-  </div>
-
   <!-- PARAMETERS -->
   <div class="eyebrow">Parameters from order</div>
   <div class="card" id="paramCard"></div>
@@ -322,6 +317,11 @@ select.set-input{font-family:var(--sans);font-weight:500}
   </div>
 
   <div class="advisories" id="advisories"></div>
+
+  <div class="mode" id="modeBanner">
+    <span class="dot"></span>
+    <span><b>Standalone mode.</b> Parameters are set in Settings (the gear), not drawn from an EHR order.</span>
+  </div>
 
   <details class="adv-section">
     <summary>Deployment notes — FHIR SMART &amp; webhooks</summary>
@@ -672,10 +672,14 @@ const UI = (() => {
       { name:"Correction factor", desc:`1 ${C.unitShort.replace(/s$/,'')} lowers BG by ${fmt(params.cf)} mg/dL`,
         val:`${fmt(params.cf)} <small>mg/dL</small>` },
       { name:"Target blood glucose", desc:`Correction applies only above target`,
-        val:`${fmt(params.target)} <small>mg/dL</small>` },
-      { name:"Rounding", desc:``,
-        val:`${fmt(params.increment)} <small>${C.unit==='Units'?'unit':'SU'}</small>` }
+        val:`${fmt(params.target)} <small>mg/dL</small>` }
     ];
+    // Rounding is only meaningful when the prescriber can choose it (U-100).
+    // U-10 Dilute is fixed at 1 Syringe Unit, so the row is omitted.
+    if(!C.rounding.fixed){
+      rows.push({ name:"Rounding", desc:``,
+        val:`${fmt(params.increment)} <small>${C.unit==='Units'?'unit':'SU'}</small>` });
+    }
     $("paramCard").innerHTML = rows.map(r => `
       <div class="param">
         <div class="meta"><div class="name">${r.name}</div>${r.desc?`<div class="desc">${r.desc}</div>`:``}</div>
