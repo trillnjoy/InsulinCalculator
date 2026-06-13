@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Insulin Dose Calculator — Pediatric CDS</title>
 <meta name="description" content="MAR-style rapid-acting insulin dose calculator. Standalone CDS engine, FHIR SMART-ready." />
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#0e6e78" />
+<link rel="apple-touch-icon" href="insulin_calc_192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Insulin Calc" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <style>
 /* ============================================================
    DESIGN TOKENS
@@ -115,6 +124,8 @@ body{
 .input-label{flex:1}
 .input-label .name{font-size:15px;font-weight:600}
 .input-label .hint{font-size:11.5px;color:var(--ink-faint);margin-top:2px}
+.input-label .hint:empty{display:none}
+.input-label .hint.cap{color:var(--advisory);font-weight:600}
 .field{position:relative;width:128px;flex:none}
 .field input{
   width:100%;font-family:var(--mono);font-size:22px;font-weight:600;text-align:right;
@@ -280,7 +291,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
       <div class="input-top">
         <div class="input-label">
           <div class="name">Carbohydrates eaten</div>
-          <div class="hint" id="carbHint">Actual carb intake this meal</div>
+          <div class="hint" id="carbHint"></div>
         </div>
         <div class="field">
           <input id="inCarbs" type="number" inputmode="decimal" min="0" step="1" placeholder="0" aria-label="Carbohydrates eaten in grams">
@@ -293,7 +304,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
       <div class="input-top">
         <div class="input-label">
           <div class="name">Current blood glucose</div>
-          <div class="hint">Measured BG at time of administration</div>
+          <div class="hint" id="bgHint"></div>
         </div>
         <div class="field">
           <input id="inBg" type="number" inputmode="decimal" min="0" max="1000" step="1" placeholder="0" aria-label="Current blood glucose in mg per dL">
@@ -322,6 +333,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
     <b>Internal working tool — not for clinical use</b> without pharmacy and informatics committee review.
     Calculator is display-only and informational; it does not place orders or document administration.
     mL volume is never displayed.
+    <br><span id="buildTag" style="opacity:.7"></span>
   </div>
 </div>
 
@@ -660,22 +672,19 @@ const UI = (() => {
         val:`${fmt(params.ic)} <small>g/${C.unit==='Units'?'U':'SU'}</small>` },
       { name:"Correction factor", desc:`1 ${C.unitShort.replace(/s$/,'')} lowers BG by ${fmt(params.cf)} mg/dL`,
         val:`${fmt(params.cf)} <small>mg/dL</small>` },
-      { name:"Target blood glucose", desc:`Correction applies only above target (${band.label})`,
+      { name:"Target blood glucose", desc:`Correction applies only above target`,
         val:`${fmt(params.target)} <small>mg/dL</small>` },
-      { name:"Rounding", desc:`Always rounds up to the nearest increment`,
+      { name:"Rounding", desc:``,
         val:`${fmt(params.increment)} <small>${C.unit==='Units'?'unit':'SU'}</small>` }
     ];
     $("paramCard").innerHTML = rows.map(r => `
       <div class="param">
-        <div class="meta"><div class="name">${r.name}</div><div class="desc">${r.desc}</div></div>
+        <div class="meta"><div class="name">${r.name}</div>${r.desc?`<div class="desc">${r.desc}</div>`:``}</div>
         ${SVG.check}
         <div class="val">${r.val}</div>
       </div>`).join("");
 
-    const C2 = CDS_CONFIG.concentrations[params.conc];
-    $("inCarbs").max = C2.carb.entryMax;
-    $("carbHint").textContent = `Entry 0–${C2.carb.entryMax} g` +
-      (C2.carb.formulaCap < C2.carb.entryMax ? ` · prandial capped at ${C2.carb.formulaCap} g` : "");
+    $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
   }
 
   /* ---- live recompute + render dose ---- */
@@ -696,7 +705,7 @@ const UI = (() => {
       : "";
 
     renderDose(r, C);
-    renderAdvisories(r);
+    renderAdvisories();
 
     // fire hooks
     if(r.state === "DOSE"){
@@ -744,13 +753,25 @@ const UI = (() => {
       </div>`;
   }
 
-  function renderAdvisories(r){
-    const host = $("advisories");
-    if(!r.advisories.length){ host.innerHTML = ""; return; }
-    host.innerHTML = r.advisories.map(a => `
-      <div class="advisory ${a.type==='warn'?'warn':'info'}">
-        ${a.type==='warn'?SVG.warn:SVG.info}<div>${a.text}</div>
-      </div>`).join("");
+  // Cap notices appear inline beneath each field on blur (see capHint), and the
+  // info notes are already conveyed by the sub-calc lines — so no chips are rendered.
+  function renderAdvisories(){ $("advisories").innerHTML = ""; }
+
+  // Show a conditional cap notice under a field only when the cap actually fires.
+  function capHint(which){
+    if(which === "carbs"){
+      const cap = CDS_CONFIG.concentrations[params.conc].carb.formulaCap;
+      const v = parseFloat($("inCarbs").value);
+      setHint("carbHint", (!isNaN(v) && v > cap) ? `Prandial capped at ${cap} g.` : "");
+    } else {
+      const cap = CDS_CONFIG.bg.formulaCap;
+      const v = parseFloat($("inBg").value);
+      setHint("bgHint", (!isNaN(v) && v > cap) ? `Correction capped at ${cap} mg/dL.` : "");
+    }
+  }
+  function setHint(id, text){
+    const e = $(id); e.textContent = text;
+    e.classList.toggle("cap", !!text);
   }
 
   /* ---------------- Settings sheet ---------------- */
@@ -903,6 +924,7 @@ const UI = (() => {
     recompute();
 
     $("inCarbs").addEventListener("input", recompute);
+    $("inCarbs").addEventListener("blur", () => capHint("carbs"));
     $("inBg").addEventListener("input", function(){
       // hard entry ceiling: reject > 1000
       if(this.value !== "" && parseFloat(this.value) > CDS_CONFIG.bg.entryMax){
@@ -910,8 +932,13 @@ const UI = (() => {
       }
       recompute();
     });
+    $("inBg").addEventListener("blur", () => capHint("bg"));
 
-    $("btnReset").addEventListener("click", () => { $("inCarbs").value=""; $("inBg").value=""; recompute(); $("inCarbs").focus(); });
+    $("btnReset").addEventListener("click", () => {
+      $("inCarbs").value=""; $("inBg").value="";
+      setHint("carbHint",""); setHint("bgHint","");
+      recompute(); $("inCarbs").focus();
+    });
     $("btnSettings").addEventListener("click", openSheet);
     $("btnCloseSheet").addEventListener("click", closeSheet);
     $("btnCancel").addEventListener("click", closeSheet);
@@ -943,6 +970,26 @@ const UI = (() => {
 })();
 
 document.addEventListener("DOMContentLoaded", UI.init);
+
+/* ---------------- PWA: service worker registration + version readout ----------------
+   sw.js owns the version (cache key). The page asks the active worker for its
+   version string and shows it in the footer so a deploy can be verified at a glance. */
+function showBuildTag(v){ const el = document.getElementById("buildTag"); if(el) el.textContent = "Offline-ready · " + v; }
+if("serviceWorker" in navigator){
+  window.addEventListener("load", async () => {
+    try{
+      await navigator.serviceWorker.register("sw.js");
+      navigator.serviceWorker.addEventListener("message", ev => {
+        if(ev.data && ev.data.type === "VERSION") showBuildTag(ev.data.version);
+      });
+      const askVersion = () => navigator.serviceWorker.controller &&
+        navigator.serviceWorker.controller.postMessage("GET_VERSION");
+      askVersion();
+      // re-ask once a new worker takes control (e.g. after a versioned deploy)
+      navigator.serviceWorker.addEventListener("controllerchange", askVersion);
+    }catch(e){ console.warn("Service worker registration failed:", e); }
+  });
+}
 </script>
 </body>
 </html>
