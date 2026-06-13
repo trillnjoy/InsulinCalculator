@@ -15,7 +15,7 @@
  *  · Non-GET / cross-origin (e.g. the optional result webhook) -> passthrough.
  * ===========================================================================*/
 
-const VERSION = "v1.1.0";
+const VERSION = "v1.2.0";
 const CACHE = `insulin-calc-${VERSION}`;
 
 // App shell — fully self-contained, no external assets.
@@ -25,7 +25,12 @@ const PRECACHE = [
   "./manifest.webmanifest",
   "./insulin_calc_192.png",
   "./insulin_calc_512.png",
-  "./Insulin_Calc_Parameters.pdf"
+  "./Insulin_Calc_Parameters.pdf",
+  "./Breakfast_216.png",
+  "./Lunch_216.png",
+  "./Dinner_216.png",
+  "./Snack_216.png",
+  "./Bedtime_216.png"
 ];
 
 self.addEventListener("install", event => {

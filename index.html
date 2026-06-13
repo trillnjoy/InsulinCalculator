@@ -118,6 +118,66 @@ body{
 .param .val .uom{width:70px;padding-left:10px;text-align:left;font-size:12px;color:var(--ink-faint);font-family:var(--sans);font-weight:500}
 .check{width:20px;height:20px;flex:none;color:var(--safe)}
 
+/* ---------- Order / meal header ---------- */
+.order-header{
+  display:flex;align-items:center;gap:13px;width:100%;text-align:left;cursor:pointer;
+  appearance:none;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:11px 13px;margin:4px 0 6px;color:inherit;
+  transition:border-color .15s;
+}
+.order-header:hover{border-color:var(--line-strong)}
+.meal-icon{
+  width:60px;height:60px;flex:none;border-radius:12px;background:var(--paper);
+  border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;color:var(--ink-faint);
+}
+.meal-icon img{width:100%;height:100%;object-fit:contain}
+.meal-icon .meal-ph{width:26px;height:26px}
+.meal-meta{flex:1;min-width:0}
+.meal-label{font-size:16px;font-weight:650;color:var(--ink)}
+.meal-sub{font-size:11.5px;color:var(--ink-faint);margin-top:2px}
+.meal-chev{width:20px;height:20px;flex:none;color:var(--ink-faint)}
+
+/* ---------- Confirm checks (touch to confirm order detail) ---------- */
+.confirm{
+  appearance:none;border:none;background:transparent;padding:6px;margin:-6px;cursor:pointer;flex:none;
+  border-radius:8px;line-height:0;-webkit-tap-highlight-color:transparent;transition:background .12s;
+}
+.confirm:hover{background:var(--paper)}
+.confirm svg{width:20px;height:20px;display:block;transition:color .15s}
+.confirm[aria-pressed="false"] svg{color:var(--line-strong)}
+.confirm[aria-pressed="true"]  svg{color:var(--safe)}
+.confirm:focus-visible{outline:2px solid var(--teal);outline-offset:1px}
+
+/* ---------- Lock bar ---------- */
+.lockbar{
+  display:none;align-items:center;gap:9px;margin:0 0 16px;
+  font-size:12px;color:#7a4a06;background:var(--advisory-wash);border:1px solid #eccf9a;
+  border-radius:10px;padding:9px 12px;
+}
+.lockbar.show{display:flex}
+.lockbar svg{width:16px;height:16px;flex:none;color:var(--advisory)}
+.lockbar b{font-weight:700}
+
+/* ---------- Locked entry card ---------- */
+#entryCard.locked{opacity:.55;filter:grayscale(.25)}
+#entryCard.locked .field input,
+#entryCard.locked .iob-row{pointer-events:none}
+#entryCard.locked .iob-row{cursor:default}
+
+/* ---------- Meal picker grid ---------- */
+.meal-help{font-size:12.5px;color:var(--ink-soft);line-height:1.45;margin:0 0 16px}
+.meal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.meal-opt{
+  appearance:none;cursor:pointer;background:var(--card);border:1.5px solid var(--line-strong);
+  border-radius:12px;padding:12px 8px 10px;display:flex;flex-direction:column;align-items:center;gap:8px;
+  transition:border-color .15s,background .15s;color:var(--ink);
+}
+.meal-opt:hover{border-color:var(--teal);background:var(--teal-wash)}
+.meal-opt[aria-pressed="true"]{border-color:var(--teal);background:var(--teal-wash);box-shadow:0 0 0 2px var(--teal-wash)}
+.meal-opt .mo-icon{width:62px;height:62px;border-radius:10px;background:var(--paper);display:grid;place-items:center;overflow:hidden}
+.meal-opt .mo-icon img{width:100%;height:100%;object-fit:contain}
+.meal-opt .mo-label{font-size:12.5px;font-weight:600}
+
 /* ---------- Patient inputs ---------- */
 .input-row{padding:14px 16px;border-bottom:1px solid var(--line)}
 .input-row:last-child{border-bottom:none}
@@ -295,13 +355,30 @@ select.set-input{font-family:var(--sans);font-weight:500}
 
 <div class="wrap">
 
+  <!-- ORDER / MEAL CONTEXT -->
+  <button class="order-header" id="mealTile" type="button" aria-haspopup="dialog" aria-label="Select meal or order context">
+    <span class="meal-icon" id="mealIcon" aria-hidden="true">
+      <svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
+    </span>
+    <span class="meal-meta">
+      <span class="meal-label" id="mealLabel">Select order</span>
+      <span class="meal-sub" id="mealSub">Tap to choose meal · snack · bedtime</span>
+    </span>
+    <svg class="meal-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  </button>
+
   <!-- PARAMETERS -->
   <div class="eyebrow">Parameters from order</div>
   <div class="card" id="paramCard"></div>
 
+  <div class="lockbar" id="lockBar" role="status">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+    <span id="lockMsg"></span>
+  </div>
+
   <!-- PATIENT VALUES -->
   <div class="eyebrow">Enter patient values</div>
-  <div class="card">
+  <div class="card" id="entryCard">
     <div class="input-row">
       <div class="input-top">
         <div class="input-label">
@@ -420,6 +497,19 @@ select.set-input{font-family:var(--sans);font-weight:500}
         <div class="note" id="roundNote"></div>
       </div>
 
+      <div class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
+        <label class="iob-row" for="setConfirm" style="padding:0;border:none;gap:11px">
+          <input type="checkbox" id="setConfirm" />
+          <span class="iob-box" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          </span>
+          <span class="iob-text">
+            <span class="iob-name">Require order-detail confirmation</span>
+            <span class="iob-hint">RN must touch each inherited order detail before entry unlocks. Mirrors the Clinical Standard Work workflow; optional in this freestanding context.</span>
+          </span>
+        </label>
+      </div>
+
       <details class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
         <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Advanced — result webhook (optional)</summary>
         <div style="margin-top:12px">
@@ -432,6 +522,24 @@ select.set-input{font-family:var(--sans);font-weight:500}
     <div class="sheet-foot">
       <button class="btn btn-ghost" id="btnCancel" style="flex:1">Cancel</button>
       <button class="btn btn-primary" id="btnSave" style="flex:2">Save parameters</button>
+    </div>
+    <div style="height:8px"></div>
+  </div>
+</div>
+
+<!-- MEAL / ORDER PICKER -->
+<div class="scrim" id="mealScrim">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Select meal or order">
+    <div class="sheet-head">
+      <h2>Which order?</h2>
+      <div class="spacer"></div>
+      <button class="iconbtn" id="btnCloseMeal" style="background:var(--paper);border-color:var(--line);color:var(--ink-soft)" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <p class="meal-help">Choose the meal, snack, or bedtime order you are dosing. The icon appears top-left as a cue that the right order was selected. Changing the order requires re-confirming the order details below.</p>
+      <div class="meal-grid" id="mealGrid"></div>
     </div>
     <div style="height:8px"></div>
   </div>
@@ -636,7 +744,7 @@ const StandaloneParameterSource = (() => {
   const KEY = "insulinCalc.params.v1";
   const defaults = {
     conc:"U100", ageBand:"a5_11",
-    ic:15, cf:30, target:120, increment:0.5, webhook:""
+    ic:15, cf:30, target:120, increment:0.5, webhook:"", requireConfirm:true
   };
   function load(){
     try{ const s = JSON.parse(localStorage.getItem(KEY)); return s ? {...defaults, ...s} : {...defaults}; }
@@ -710,6 +818,17 @@ const UI = (() => {
   const $ = id => document.getElementById(id);
   let params = StandaloneParameterSource.load();
 
+  // Meal / order context. Icons live in the repo root (offline-cached).
+  const MEALS = [
+    { key:"breakfast", label:"Breakfast", icon:"Breakfast_216.png" },
+    { key:"lunch",     label:"Lunch",     icon:"Lunch_216.png" },
+    { key:"dinner",    label:"Dinner",    icon:"Dinner_216.png" },
+    { key:"snack",     label:"Snack",     icon:"Snack_216.png" },
+    { key:"bedtime",   label:"Bedtime",   icon:"Bedtime_216.png" }
+  ];
+  let confirmed = new Set();   // which order-detail rows the RN has touch-confirmed
+  let mealKey = null;          // selected meal/order (visual cue only)
+
   const SVG = {
     check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="check"><path d="M20 6 9 17l-5-5"/></svg>',
     warn:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
@@ -724,33 +843,112 @@ const UI = (() => {
     const band = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
     $("barSub").textContent = `${C.label} · dosed in ${C.unit}`;
     const rows = [
-      { name:"Insulin : carb ratio", desc:`1 ${C.unitShort.replace(/s$/,'')} covers ${fmt(params.ic)} g carbohydrate`,
+      { key:"ic", name:"Insulin : carb ratio", desc:`1 ${C.unitShort.replace(/s$/,'')} covers ${fmt(params.ic)} g carbohydrate`,
         num:`${fmt(params.ic)}`, uom:`g/${C.unit==='Units'?'Unit':'Syr Unit'}` },
-      { name:"Correction factor", desc:`1 ${C.unitShort.replace(/s$/,'')} lowers BG by ${fmt(params.cf)} mg/dL`,
+      { key:"cf", name:"Correction factor", desc:`1 ${C.unitShort.replace(/s$/,'')} lowers BG by ${fmt(params.cf)} mg/dL`,
         num:`${fmt(params.cf)}`, uom:`mg/dL` },
-      { name:"Target blood glucose", desc:`Correction applies only above target`,
+      { key:"target", name:"Target blood glucose", desc:`Correction applies only above target`,
         num:`${fmt(params.target)}`, uom:`mg/dL` }
     ];
     // Rounding is only meaningful when the prescriber can choose it (U-100).
     // U-10 Dilute is fixed at 1 Syringe Unit, so the row is omitted.
     if(!C.rounding.fixed){
-      rows.push({ name:"Rounding", desc:``,
+      rows.push({ key:"rounding", name:"Rounding", desc:``,
         num:`${fmt(params.increment)}`, uom:`${C.unit==='Units'?'Unit':'Syr Unit'}` });
     }
-    $("paramCard").innerHTML = rows.map(r => `
+    const gate = params.requireConfirm;
+    $("paramCard").innerHTML = rows.map(r => {
+      const on = !gate || confirmed.has(r.key);
+      const checkEl = gate
+        ? `<button class="confirm" data-key="${r.key}" aria-pressed="${confirmed.has(r.key)}" aria-label="Confirm ${r.name}">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+           </button>`
+        : SVG.check;
+      return `
       <div class="param">
         <div class="meta"><div class="name">${r.name}</div>${r.desc?`<div class="desc">${r.desc}</div>`:``}</div>
-        ${SVG.check}
+        ${checkEl}
         <div class="val"><span class="num">${r.num}</span><span class="uom">${r.uom}</span></div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
 
     $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
+    updateLock();
+  }
+
+  /* ---- touch-confirm gating (Clinical Standard Work workflow) ---- */
+  function requiredKeys(){
+    const C = CDS_CONFIG.concentrations[params.conc];
+    return C.rounding.fixed ? ["ic","cf","target"] : ["ic","cf","target","rounding"];
+  }
+  function allConfirmed(){
+    if(!params.requireConfirm) return true;
+    return requiredKeys().every(k => confirmed.has(k));
+  }
+  function toggleConfirm(key){
+    if(confirmed.has(key)) confirmed.delete(key); else confirmed.add(key);
+    const btn = $("paramCard").querySelector(`.confirm[data-key="${key}"]`);
+    if(btn) btn.setAttribute("aria-pressed", confirmed.has(key) ? "true" : "false");
+    updateLock();
+  }
+  function resetConfirmations(){
+    confirmed = new Set();
+    // a changed order means starting over — clear entered values too
+    $("inCarbs").value=""; $("inBg").value=""; $("inIOB").checked=false;
+    setHint("carbHint",""); setHint("bgHint","");
+  }
+  function updateLock(){
+    const locked = !allConfirmed();
+    $("entryCard").classList.toggle("locked", locked);
+    $("inCarbs").disabled = locked; $("inBg").disabled = locked; $("inIOB").disabled = locked;
+    const bar = $("lockBar");
+    if(locked){
+      const req = requiredKeys();
+      const done = req.filter(k => confirmed.has(k)).length;
+      $("lockMsg").innerHTML = `Touch each grey check to confirm the order details — <b>${done} of ${req.length}</b> confirmed.`;
+      bar.classList.add("show");
+    } else {
+      bar.classList.remove("show");
+    }
+    recompute();   // keep the dose panel synced with lock/entry state
+  }
+
+  /* ---- meal / order picker ---- */
+  function renderMeal(){
+    const m = MEALS.find(x => x.key === mealKey);
+    if(m){
+      $("mealIcon").innerHTML = `<img src="${m.icon}" alt="${m.label}">`;
+      $("mealLabel").textContent = m.label;
+      $("mealSub").textContent = "Order selected · tap to change";
+    } else {
+      $("mealIcon").innerHTML = `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
+      $("mealLabel").textContent = "Select order";
+      $("mealSub").textContent = "Tap to choose meal · snack · bedtime";
+    }
+  }
+  function buildMealGrid(){
+    $("mealGrid").innerHTML = MEALS.map(m => `
+      <button class="meal-opt" type="button" data-meal="${m.key}" aria-pressed="${m.key===mealKey}">
+        <span class="mo-icon"><img src="${m.icon}" alt=""></span>
+        <span class="mo-label">${m.label}</span>
+      </button>`).join("");
+  }
+  function openMealSheet(){ buildMealGrid(); $("mealScrim").classList.add("open"); }
+  function closeMealSheet(){ $("mealScrim").classList.remove("open"); }
+  function selectMeal(key){
+    const changed = key !== mealKey;
+    mealKey = key;
+    renderMeal();
+    closeMealSheet();
+    if(changed){ resetConfirmations(); renderParams(); }  // new order → re-confirm details
   }
 
   /* ---- live recompute + render dose ---- */
   function recompute(){
-    const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
-                     insulinOnBoard:$("inIOB").checked };
+    const locked = params.requireConfirm && !allConfirmed();
+    const inputs = locked
+      ? { carbs:"", bg:"", insulinOnBoard:false }   // entry gated until order details confirmed
+      : { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(), insulinOnBoard:$("inIOB").checked };
     const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target, increment:params.increment };
     const r = Engine.computeDose(p, inputs);
     const C = CDS_CONFIG.concentrations[params.conc];
@@ -853,6 +1051,7 @@ const UI = (() => {
     $("setTarget").value = params.target;
     $("setWebhook").value = params.webhook || "";
     $("setAge").value = params.ageBand;
+    $("setConfirm").checked = !!params.requireConfirm;
     renderRoundSeg();
     refreshSetNotes();
     clearSetMsgs();
@@ -964,11 +1163,12 @@ const UI = (() => {
     if(blocked) return;
 
     params = { conc, ageBand, ic:vIc.value, cf:vCf.value, target:vTg.value,
-               increment:inc, webhook:$("setWebhook").value.trim() };
+               increment:inc, webhook:$("setWebhook").value.trim(),
+               requireConfirm:$("setConfirm").checked };
     StandaloneParameterSource.save(params);
     Hooks.emit("parametersSaved", params);
+    resetConfirmations();   // changed order details must be re-confirmed
     renderParams();
-    recompute();
     // Keep sheet open if a correction/advisory is still shown so the nurse can verify; else close.
     const anyMsg = ["icMsg","cfMsg","targetMsg"].some(id => $(id).classList.contains("show"));
     if(!anyMsg) closeSheet();
@@ -985,7 +1185,8 @@ const UI = (() => {
       <br>· Point <code>Hooks.dispatchWebhook</code> at your CDS Hooks / documentation endpoint, or wire
       <code>Hooks.on('doseCalculated', …)</code> to a SMART scope write.
       <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.
-      <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.`;
+      <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.
+      <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the touch-confirm gate (each detail tapped before entry unlocks) carries over from the Clinical Standard Work workflow.`;
   }
 
   /* ---------------- Parameter grid (native share) ----------------
@@ -1019,9 +1220,25 @@ const UI = (() => {
 
   /* ---------------- wire up ---------------- */
   function init(){
+    renderMeal();
     renderParams();
     renderDeployNotes();
     recompute();
+
+    // touch-confirm of order details (event delegation)
+    $("paramCard").addEventListener("click", e => {
+      const b = e.target.closest(".confirm"); if(!b) return;
+      toggleConfirm(b.dataset.key);
+    });
+
+    // meal / order picker
+    $("mealTile").addEventListener("click", openMealSheet);
+    $("btnCloseMeal").addEventListener("click", closeMealSheet);
+    $("mealScrim").addEventListener("click", e => { if(e.target === $("mealScrim")) closeMealSheet(); });
+    $("mealGrid").addEventListener("click", e => {
+      const b = e.target.closest(".meal-opt"); if(!b) return;
+      selectMeal(b.dataset.meal);
+    });
 
     $("inCarbs").addEventListener("input", recompute);
     $("inCarbs").addEventListener("blur", () => capHint("carbs"));
@@ -1047,7 +1264,7 @@ const UI = (() => {
     $("btnCancel").addEventListener("click", closeSheet);
     $("btnSave").addEventListener("click", save);
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
-    document.addEventListener("keydown", e => { if(e.key === "Escape") closeSheet(); });
+    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeSheet(); closeMealSheet(); } });
 
     $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); revalidateAll(); });
     $("setAge").addEventListener("change", () => { refreshSetNotes(); revalidateAll(); });
