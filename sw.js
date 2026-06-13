@@ -15,7 +15,7 @@
  *  · Non-GET / cross-origin (e.g. the optional result webhook) -> passthrough.
  * ===========================================================================*/
 
-const VERSION = "v1.0.4";
+const VERSION = "v1.0.7";
 const CACHE = `insulin-calc-${VERSION}`;
 
 // App shell — fully self-contained, no external assets.
@@ -24,7 +24,8 @@ const PRECACHE = [
   "./index.html",
   "./manifest.webmanifest",
   "./insulin_calc_192.png",
-  "./insulin_calc_512.png"
+  "./insulin_calc_512.png",
+  "./Insulin_Calc_Parameters.pdf"
 ];
 
 self.addEventListener("install", event => {
@@ -52,6 +53,14 @@ self.addEventListener("fetch", event => {
   if (req.method !== "GET") return;                    // ignore POSTs (webhook, etc.)
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;     // same-origin only
+
+  // Static files (PDF, icons, manifest, etc.) are cache-first even when opened
+  // as a top-level navigation — e.g. the parameter grid PDF in a new tab — so an
+  // offline open serves the file, not the app-shell HTML fallback.
+  if (/\.(pdf|png|jpe?g|svg|gif|webp|css|js|json|webmanifest|ico|woff2?|ttf)$/i.test(url.pathname)) {
+    event.respondWith(cacheFirst(req));
+    return;
+  }
 
   const isHTML = req.mode === "navigate" ||
                  (req.headers.get("accept") || "").includes("text/html");
