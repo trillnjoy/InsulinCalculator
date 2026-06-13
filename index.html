@@ -286,9 +286,9 @@ select.set-input{font-family:var(--sans);font-weight:500}
     <button class="iconbtn" id="btnSettings" title="Order parameters" aria-label="Order parameters">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
-    <a class="iconbtn" id="btnInfo" href="Insulin_Calc_Parameters.pdf" target="_blank" rel="noopener" title="Parameter grid (opens in new tab)" aria-label="Parameter grid reference (opens in new tab)">
+    <button class="iconbtn" id="btnInfo" type="button" title="Parameter grid" aria-label="Parameter grid reference">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-    </a>
+    </button>
   </div>
 </div>
 
@@ -987,6 +987,35 @@ const UI = (() => {
       <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.`;
   }
 
+  /* ---------------- Parameter grid (native share) ----------------
+     iOS standalone PWAs trap target="_blank" PDF links in an in-app viewer with
+     no way back. Instead we hand the PDF to the native share sheet so the user
+     chooses how to view it (Files, Books, Safari, …) and returns to the app.
+     The File is preloaded so the click handler can call navigator.share
+     synchronously — sharing files requires the user gesture, and an await mid-
+     handler can void it on Safari. Desktop browsers without file-share fall back
+     to opening the PDF in a new tab (no modal trap there). */
+  const PDF_URL = "Insulin_Calc_Parameters.pdf";
+  let pdfFile = null;
+  async function preloadParameterGrid(){
+    try{
+      const res = await fetch(PDF_URL);
+      if(res.ok){
+        const blob = await res.blob();
+        pdfFile = new File([blob], PDF_URL, { type:"application/pdf" });
+      }
+    }catch(e){ /* offline before cache or missing — fallback handles it */ }
+  }
+  function openParameterGrid(){
+    if(pdfFile && navigator.canShare && navigator.canShare({ files:[pdfFile] })){
+      navigator.share({ files:[pdfFile], title:"Insulin Calculator — Parameter Grid" })
+        .catch(err => { if(!err || err.name !== "AbortError") fallbackOpenPdf(); });
+      return;
+    }
+    fallbackOpenPdf();
+  }
+  function fallbackOpenPdf(){ window.open(PDF_URL, "_blank", "noopener"); }
+
   /* ---------------- wire up ---------------- */
   function init(){
     renderParams();
@@ -1011,6 +1040,8 @@ const UI = (() => {
       recompute(); $("inCarbs").focus();
     });
     $("btnSettings").addEventListener("click", openSheet);
+    $("btnInfo").addEventListener("click", openParameterGrid);
+    preloadParameterGrid();
     $("btnCloseSheet").addEventListener("click", closeSheet);
     $("btnCancel").addEventListener("click", closeSheet);
     $("btnSave").addEventListener("click", save);
