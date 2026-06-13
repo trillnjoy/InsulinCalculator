@@ -143,6 +143,22 @@ body{
 }
 .subcalc b{color:var(--teal);font-weight:600}
 
+/* ---------- Insulin-on-board checkbox ---------- */
+.iob-row{display:flex;align-items:flex-start;gap:11px;padding:14px 16px;border-top:1px solid var(--line);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.iob-row input{position:absolute;opacity:0;width:1px;height:1px}
+.iob-box{width:22px;height:22px;flex:none;margin-top:1px;border:1.5px solid var(--line-strong);border-radius:6px;background:#fcfdfd;display:grid;place-items:center;transition:background .15s,border-color .15s}
+.iob-box svg{width:14px;height:14px;color:#fff;opacity:0;transition:opacity .12s}
+.iob-row input:checked + .iob-box{background:var(--teal);border-color:var(--teal)}
+.iob-row input:checked + .iob-box svg{opacity:1}
+.iob-row input:focus-visible + .iob-box{box-shadow:0 0 0 3px var(--teal-wash)}
+.iob-text{display:flex;flex-direction:column;gap:2px}
+.iob-name{font-size:14.5px;font-weight:600;color:var(--ink)}
+.iob-hint{font-size:11.5px;color:var(--ink-faint);line-height:1.35}
+
+.dose-note{margin-top:13px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;line-height:1.42;
+  background:var(--advisory-wash);border:1px solid #eccf9a;color:#7a4a06;border-radius:9px;padding:9px 11px}
+.dose-note svg{width:16px;height:16px;flex:none;color:var(--advisory);margin-top:1px}
+
 /* ---------- Dose panel (signature) ---------- */
 .dose{
   margin-top:24px;border-radius:var(--radius);overflow:hidden;
@@ -308,6 +324,16 @@ select.set-input{font-family:var(--sans);font-weight:500}
       </div>
       <div class="subcalc" id="bgSub"></div>
     </div>
+    <label class="iob-row" for="inIOB">
+      <input type="checkbox" id="inIOB" />
+      <span class="iob-box" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      </span>
+      <span class="iob-text">
+        <span class="iob-name">Rapid-acting insulin within past 3 h</span>
+        <span class="iob-hint">Holds the correction dose to prevent stacking. Check if a recent dose isn't yet on the MAR.</span>
+      </span>
+    </label>
   </div>
 
   <!-- DOSE READOUT -->
@@ -509,14 +535,16 @@ const Engine = (() => {
     const BG = CDS_CONFIG.bg;
     const carbs = (inputs.carbs === "" || inputs.carbs == null) ? null : parseFloat(inputs.carbs);
     const bg    = (inputs.bg    === "" || inputs.bg    == null) ? null : parseFloat(inputs.bg);
+    const iob   = !!inputs.insulinOnBoard;   // rapid-acting insulin given within the past 3 h
 
     const res = {
       conc:params.conc, unit:C.unit, product:C.product,
       state:"INCOMPLETE",      // INCOMPLETE | CRITICAL_HYPO | HYPO | DOSE
       doseSuppressed:false,
-      carbsEntered:carbs, bgEntered:bg,
+      carbsEntered:carbs, bgEntered:bg, insulinOnBoard:iob,
       carbsUsed:null, bgUsedForCorrection:null,
-      prandial:0, correction:0, totalUnrounded:0, totalRounded:null,
+      prandial:0, correction:0, correctionWithheld:0, correctionHeld:false,
+      totalUnrounded:0, totalRounded:null,
       carbCapApplied:false, bgCapApplied:false, correctionFloored:false,
       advisories:[], rescue:null,
       params:{ ic:params.ic, cf:params.cf, target:params.target, increment:params.increment }
@@ -561,11 +589,24 @@ const Engine = (() => {
     res.bgUsedForCorrection = bgForCorr;
 
     // --- Correction (floor 0; only when BG > target) ---
+    let correction = 0;
     if(bgForCorr > params.target){
-      res.correction = round2((bgForCorr - params.target) / params.cf);
+      correction = round2((bgForCorr - params.target) / params.cf);
     } else {
-      res.correction = 0; res.correctionFloored = true;
+      res.correctionFloored = true;
     }
+
+    // --- Insulin-on-board hold (anti-stacking) ---
+    // If rapid-acting insulin was given within the past 3 h, hold the correction
+    // component to avoid stacking. Prandial (carb) coverage is still given.
+    // Source: nurse checkbox (standalone) or MAR query (SMART) — either way it
+    // arrives as inputs.insulinOnBoard; the nurse remains the final arbiter.
+    if(iob){
+      res.correctionWithheld = correction;
+      res.correctionHeld = correction > 0;
+      correction = 0;
+    }
+    res.correction = correction;
 
     // --- Sum + ceiling rounding ---
     res.totalUnrounded = round2(res.prandial + res.correction);
@@ -609,11 +650,23 @@ const StandaloneParameterSource = (() => {
      target    <- ordered target BG field (age-stratified at order entry)
      increment <- prescriber rounding toggle (U-10 fixed = 1)
    Current BG may be pre-filled from a glucose Observation (LOINC 2339-0),
-   but the nurse confirms point-of-care BG before dosing. */
+   but the nurse confirms point-of-care BG before dosing.
+
+   INSULIN ON BOARD (anti-stacking): query the MAR for a rapid-acting insulin
+   MedicationAdministration in the past 3 h (status=completed, by RxNorm /
+   medication code). If found, pre-check the calculator's insulinOnBoard flag so
+   the correction component is held. The nurse can still toggle it: they may know
+   a dose was given that the MAR hasn't captured yet, or that a charted dose
+   shouldn't count. The flag is an INPUT to Engine.computeDose, never an order
+   parameter — keep it out of the params shape above. */
 const FhirParameterSource = {
   supportsLiveOrder:true, mode:"smart",
   async load(/* fhirClient */){
     throw new Error("FhirParameterSource.load() not implemented — supply a SMART fhirClient and map MedicationRequest fields to the params shape above.");
+  },
+  // Returns true if rapid-acting insulin was administered within the lookback window.
+  async insulinOnBoard(/* fhirClient, lookbackHours = 3 */){
+    throw new Error("insulinOnBoard() not implemented — query MedicationAdministration (rapid-acting, status=completed) within the past 3 h.");
   }
 };
 
@@ -692,19 +745,23 @@ const UI = (() => {
 
   /* ---- live recompute + render dose ---- */
   function recompute(){
-    const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim() };
+    const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
+                     insulinOnBoard:$("inIOB").checked };
     const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target, increment:params.increment };
     const r = Engine.computeDose(p, inputs);
     const C = CDS_CONFIG.concentrations[params.conc];
+    const u = C.unit==='Units' ? 'units' : 'SU';
 
     // sub-calcs under each field
     $("carbSub").innerHTML = (r.carbsEntered != null && r.state !== "CRITICAL_HYPO" && r.state !== "HYPO")
-      ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${C.unit==='Units'?'units':'SU'}</b>`
+      ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${u}</b>`
       : "";
     $("bgSub").innerHTML = (r.bgEntered != null && r.state === "DOSE")
-      ? (r.correctionFloored
-          ? `BG ≤ target → <b>no correction</b>`
-          : `Correction = (${fmt(r.bgUsedForCorrection)} − ${fmt(params.target)}) ÷ ${fmt(params.cf)} = <b>${fmt(r.correction)} ${C.unit==='Units'?'units':'SU'}</b>`)
+      ? (r.correctionHeld
+          ? `Correction held — insulin on board <b>(would be ${fmt(r.correctionWithheld)} ${u})</b>`
+          : r.correctionFloored
+            ? `BG ≤ target → <b>no correction</b>`
+            : `Correction = (${fmt(r.bgUsedForCorrection)} − ${fmt(params.target)}) ÷ ${fmt(params.cf)} = <b>${fmt(r.correction)} ${u}</b>`)
       : "";
 
     renderDose(r, C);
@@ -743,6 +800,10 @@ const UI = (() => {
     panel.classList.add("is-safe");
     head.textContent = "Recommended dose";
     const bump = r.totalRounded !== r.totalUnrounded;
+    const incUnit = C.unit==='Units' ? 'unit' : 'SU';
+    const components = r.correctionHeld
+      ? `${fmt(r.prandial)} (carb) · correction held`
+      : `${fmt(r.prandial)} (carb) + ${fmt(r.correction)} (correction)`;
     body.innerHTML = `
       <div class="dose-product">${C.product}</div>
       <div class="dose-readout">
@@ -750,10 +811,12 @@ const UI = (() => {
         <span class="dose-unit">${C.unit}</span>
       </div>
       <div class="dose-formula">
-        ${fmt(r.prandial)} (carb) + ${fmt(r.correction)} (correction) = ${fmt(r.totalUnrounded)}
+        ${components} = ${fmt(r.totalUnrounded)}
         ${bump ? ` → rounds up to <b style="color:var(--teal-deep)">${fmt(r.totalRounded)}</b>` : ` (exact)`}
-        · increment ${fmt(params.increment)} ${C.unit==='Units'?'unit':'SU'}
-      </div>`;
+        · increment ${fmt(params.increment)} ${incUnit}
+      </div>
+      ${r.correctionHeld ? `
+      <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 3&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}`;
   }
 
   // Cap notices appear inline beneath each field on blur (see capHint), and the
@@ -917,7 +980,8 @@ const UI = (() => {
       <br>· Replace the settings sheet with order-derived, read-only parameters.
       <br>· Point <code>Hooks.dispatchWebhook</code> at your CDS Hooks / documentation endpoint, or wire
       <code>Hooks.on('doseCalculated', …)</code> to a SMART scope write.
-      <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.`;
+      <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.
+      <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.`;
   }
 
   /* ---------------- wire up ---------------- */
@@ -936,9 +1000,10 @@ const UI = (() => {
       recompute();
     });
     $("inBg").addEventListener("blur", () => capHint("bg"));
+    $("inIOB").addEventListener("change", recompute);
 
     $("btnReset").addEventListener("click", () => {
-      $("inCarbs").value=""; $("inBg").value="";
+      $("inCarbs").value=""; $("inBg").value=""; $("inIOB").checked=false;
       setHint("carbHint",""); setHint("bgHint","");
       recompute(); $("inCarbs").focus();
     });
