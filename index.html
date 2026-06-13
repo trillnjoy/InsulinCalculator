@@ -220,10 +220,13 @@ select.set-input{font-family:var(--sans);font-weight:500}
 }
 .seg button[aria-pressed="true"]{border-color:var(--teal);background:var(--teal-wash);color:var(--teal-deep)}
 .seg button:disabled{opacity:.5;cursor:not-allowed}
-.setmsg{margin-top:8px;font-size:12px;line-height:1.45;display:none;border-radius:9px;padding:9px 11px}
-.setmsg.show{display:block}
-.setmsg.warn{background:var(--advisory-wash);color:#7a4a06;border:1px solid #eccf9a}
-.setmsg.info{background:var(--teal-wash);color:var(--teal-deep);border:1px solid #bfe0e2}
+.setmsg{margin-top:8px;font-size:12.5px;line-height:1.45;display:none;gap:8px;align-items:flex-start;border-radius:9px;padding:9px 11px}
+.setmsg.show{display:flex}
+.setmsg svg{width:16px;height:16px;flex:none;margin-top:1px}
+.setmsg.error{background:#fdecec;color:#8f2727;border:1px solid #efb9b9}
+.setmsg.error svg{color:var(--stop)}
+.setmsg.advisory{background:var(--advisory-wash);color:#7a4a06;border:1px solid #eccf9a}
+.setmsg.advisory svg{color:var(--advisory)}
 .sheet-foot{display:flex;gap:10px;padding:4px 18px 0}
 
 .disclaimer{
@@ -486,7 +489,7 @@ const Engine = (() => {
     if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove){
       advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
     }
-    return { ok:true, value, corrected, advisory, message, range };
+    return { ok:true, value, corrected, advisory, message, range, entered:num };
   }
 
   /* Core dose computation. Returns everything the UI / a webhook needs. */
@@ -814,27 +817,60 @@ const UI = (() => {
     $("ageNote").textContent = "U-100 target BG range tightens with age.";
   }
 
-  function clearSetMsgs(){ ["icMsg","cfMsg","targetMsg"].forEach(id => { const e=$(id); e.className="setmsg"; e.textContent=""; }); }
-  function showSetMsg(id, kind, text){ const e=$(id); e.className=`setmsg show ${kind}`; e.textContent=text; }
+  function clearSetMsgs(){ ["icMsg","cfMsg","targetMsg"].forEach(clearOne); }
+  function clearOne(id){ const e=$(id); e.className="setmsg"; e.innerHTML=""; }
+  function showSetMsg(id, kind, text){
+    const e=$(id);
+    e.className=`setmsg show ${kind}`;
+    e.innerHTML = `${kind==="error"?SVG.warn:SVG.info}<span>${text}</span>`;
+  }
+
+  // Compose a short, problem-signalling message from a validation result.
+  function fieldMsg(field, v){
+    if(v.corrected){
+      const below = v.entered < v.range.min;
+      return { kind:"error", text: below
+        ? `Raised to minimum ${v.range.min} (was ${fmt(v.entered)}).`
+        : `Lowered to maximum ${v.range.max} (was ${fmt(v.entered)}).` };
+    }
+    if(v.advisory){
+      return { kind:"advisory", text:`Above ${v.range.advisoryAbove} mg/dL/unit — verify (possible data-entry error).` };
+    }
+    return null;
+  }
+
+  // Validate one field, snap to boundary, and show/clear its message. Called on blur.
+  function validateField(field, inputId, msgId, correct){
+    const ageBand = $("setAge").value || Object.keys(CDS_CONFIG.concentrations[$("setConc").value].targetBands)[0];
+    const v = Engine.validateParameter(field, $(inputId).value, $("setConc").value, ageBand);
+    if(v.empty){ clearOne(msgId); return v; }
+    if(correct && v.corrected) $(inputId).value = v.value;
+    const m = fieldMsg(field, v);
+    if(m) showSetMsg(msgId, m.kind, m.text); else clearOne(msgId);
+    return v;
+  }
+
+  // Re-check all populated fields (e.g. after concentration / age band change tightens ranges).
+  function revalidateAll(){
+    [["ic","setIc","icMsg"],["cf","setCf","cfMsg"],["target","setTarget","targetMsg"]]
+      .forEach(([f,inp,msg]) => { if($(inp).value !== "") validateField(f, inp, msg, true); else clearOne(msg); });
+  }
 
   function save(){
-    clearSetMsgs();
     const conc = $("setConc").value;
     const ageBand = ($("setAge").value) || Object.keys(CDS_CONFIG.concentrations[conc].targetBands)[0];
     const inc = parseFloat($("setRound").dataset.val);
 
-    const vIc = Engine.validateParameter("ic", $("setIc").value, conc, ageBand);
-    const vCf = Engine.validateParameter("cf", $("setCf").value, conc, ageBand);
-    const vTg = Engine.validateParameter("target", $("setTarget").value, conc, ageBand);
+    // Each call snaps to boundary and shows its own message if needed.
+    const vIc = validateField("ic", "setIc", "icMsg", true);
+    const vCf = validateField("cf", "setCf", "cfMsg", true);
+    const vTg = validateField("target", "setTarget", "targetMsg", true);
 
     let blocked = false;
-    [["ic",vIc,"setIc","icMsg"],["cf",vCf,"setCf","cfMsg"],["target",vTg,"setTarget","targetMsg"]]
-      .forEach(([f,v,inputId,msgId]) => {
-        if(v.empty){ showSetMsg(msgId,"warn","Enter a value."); blocked = true; return; }
-        if(v.corrected){ $(inputId).value = v.value; showSetMsg(msgId,"warn",v.message); }
-        if(v.advisory){ showSetMsg(msgId,"info",v.advisory); }
-      });
-    if(blocked) return;   // require all three present
+    [[vIc,"icMsg"],[vCf,"cfMsg"],[vTg,"targetMsg"]].forEach(([v,msgId]) => {
+      if(v.empty){ showSetMsg(msgId,"error","Enter a value."); blocked = true; }
+    });
+    if(blocked) return;
 
     params = { conc, ageBand, ic:vIc.value, cf:vCf.value, target:vTg.value,
                increment:inc, webhook:$("setWebhook").value.trim() };
@@ -842,7 +878,7 @@ const UI = (() => {
     Hooks.emit("parametersSaved", params);
     renderParams();
     recompute();
-    // if a correction/advisory was shown, keep sheet open briefly; else close
+    // Keep sheet open if a correction/advisory is still shown so the nurse can verify; else close.
     const anyMsg = ["icMsg","cfMsg","targetMsg"].some(id => $(id).classList.contains("show"));
     if(!anyMsg) closeSheet();
   }
@@ -883,8 +919,11 @@ const UI = (() => {
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
     document.addEventListener("keydown", e => { if(e.key === "Escape") closeSheet(); });
 
-    $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); });
-    $("setAge").addEventListener("change", refreshSetNotes);
+    $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); revalidateAll(); });
+    $("setAge").addEventListener("change", () => { refreshSetNotes(); revalidateAll(); });
+    $("setIc").addEventListener("blur", () => validateField("ic","setIc","icMsg",true));
+    $("setCf").addEventListener("blur", () => validateField("cf","setCf","cfMsg",true));
+    $("setTarget").addEventListener("blur", () => validateField("target","setTarget","targetMsg",true));
     $("setRound").addEventListener("click", e => {
       const b = e.target.closest("button[data-inc]"); if(!b || b.disabled) return;
       $("setRound").dataset.val = b.dataset.inc;
