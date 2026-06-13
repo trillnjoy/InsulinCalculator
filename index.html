@@ -113,8 +113,9 @@ body{
 .param .meta{flex:1;min-width:0}
 .param .name{font-size:15px;font-weight:600}
 .param .desc{font-size:11.5px;color:var(--ink-faint);margin-top:2px;line-height:1.35}
-.param .val{font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ink);white-space:nowrap}
-.param .val small{font-size:11px;color:var(--ink-faint);font-family:var(--sans);font-weight:500}
+.param .val{display:flex;align-items:baseline;justify-content:flex-end;font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ink);white-space:nowrap}
+.param .val .num{text-align:right}
+.param .val .uom{width:70px;padding-left:10px;text-align:left;font-size:12px;color:var(--ink-faint);font-family:var(--sans);font-weight:500}
 .check{width:20px;height:20px;flex:none;color:var(--safe)}
 
 /* ---------- Patient inputs ---------- */
@@ -126,15 +127,15 @@ body{
 .input-label .hint{font-size:11.5px;color:var(--ink-faint);margin-top:2px}
 .input-label .hint:empty{display:none}
 .input-label .hint.cap{color:var(--advisory);font-weight:600}
-.field{position:relative;width:136px;flex:none}
+.field{position:relative;width:140px;flex:none}
 .field input{
   width:100%;font-family:var(--mono);font-size:22px;font-weight:600;text-align:right;
-  padding:10px 56px 10px 12px;border:1.5px solid var(--line-strong);border-radius:10px;
+  padding:10px 70px 10px 12px;border:1.5px solid var(--line-strong);border-radius:10px;
   background:#fcfdfd;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s;
 }
 .field input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-wash)}
 .field .unit{
-  position:absolute;right:12px;top:50%;transform:translateY(-50%);
+  position:absolute;left:80px;top:50%;transform:translateY(-50%);text-align:left;
   font-size:12px;color:var(--ink-faint);pointer-events:none;
 }
 .subcalc{
@@ -724,23 +725,23 @@ const UI = (() => {
     $("barSub").textContent = `${C.label} · dosed in ${C.unit}`;
     const rows = [
       { name:"Insulin : carb ratio", desc:`1 ${C.unitShort.replace(/s$/,'')} covers ${fmt(params.ic)} g carbohydrate`,
-        val:`${fmt(params.ic)} <small>g/${C.unit==='Units'?'U':'SU'}</small>` },
+        num:`${fmt(params.ic)}`, uom:`g/${C.unit==='Units'?'Unit':'Syr Unit'}` },
       { name:"Correction factor", desc:`1 ${C.unitShort.replace(/s$/,'')} lowers BG by ${fmt(params.cf)} mg/dL`,
-        val:`${fmt(params.cf)} <small>mg/dL</small>` },
+        num:`${fmt(params.cf)}`, uom:`mg/dL` },
       { name:"Target blood glucose", desc:`Correction applies only above target`,
-        val:`${fmt(params.target)} <small>mg/dL</small>` }
+        num:`${fmt(params.target)}`, uom:`mg/dL` }
     ];
     // Rounding is only meaningful when the prescriber can choose it (U-100).
     // U-10 Dilute is fixed at 1 Syringe Unit, so the row is omitted.
     if(!C.rounding.fixed){
       rows.push({ name:"Rounding", desc:``,
-        val:`${fmt(params.increment)} <small>${C.unit==='Units'?'unit':'SU'}</small>` });
+        num:`${fmt(params.increment)}`, uom:`${C.unit==='Units'?'Unit':'Syr Unit'}` });
     }
     $("paramCard").innerHTML = rows.map(r => `
       <div class="param">
         <div class="meta"><div class="name">${r.name}</div>${r.desc?`<div class="desc">${r.desc}</div>`:``}</div>
         ${SVG.check}
-        <div class="val">${r.val}</div>
+        <div class="val"><span class="num">${r.num}</span><span class="uom">${r.uom}</span></div>
       </div>`).join("");
 
     $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
@@ -753,7 +754,7 @@ const UI = (() => {
     const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target, increment:params.increment };
     const r = Engine.computeDose(p, inputs);
     const C = CDS_CONFIG.concentrations[params.conc];
-    const u = C.unit==='Units' ? 'units' : 'SU';
+    const u = C.unit==='Units' ? 'units' : 'Syr Unit';
 
     // sub-calcs under each field
     $("carbSub").innerHTML = (r.carbsEntered != null && r.state !== "CRITICAL_HYPO" && r.state !== "HYPO")
@@ -803,7 +804,7 @@ const UI = (() => {
     panel.classList.add("is-safe");
     head.textContent = "Recommended dose";
     const bump = r.totalRounded !== r.totalUnrounded;
-    const incUnit = C.unit==='Units' ? 'unit' : 'SU';
+    const incUnit = C.unit==='Units' ? 'unit' : 'Syr Unit';
     const components = r.correctionHeld
       ? `${fmt(r.prandial)} (carb) · correction held`
       : `${fmt(r.prandial)} (carb) + ${fmt(r.correction)} (correction)`;
@@ -882,7 +883,7 @@ const UI = (() => {
     const cur = (conc === params.conc) ? params.increment : C.rounding.def;
     const host = $("setRound");
     host.innerHTML = C.rounding.options.map(opt => {
-      const lbl = C.unit==='Units' ? `${opt} unit` : `${opt} SU`;
+      const lbl = C.unit==='Units' ? `${opt} unit` : `${opt} Syr Unit`;
       const pressed = (Math.abs(opt - (host.dataset.val ? parseFloat(host.dataset.val) : cur)) < 1e-9);
       return `<button type="button" data-inc="${opt}" aria-pressed="${pressed}" ${C.rounding.fixed?'disabled':''}>${lbl}</button>`;
     }).join("");
