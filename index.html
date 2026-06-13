@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Insulin Dose Calculator — Pediatric CDS</title>
+<meta name="description" content="MAR-style rapid-acting insulin dose calculator. Standalone CDS engine, FHIR SMART-ready." />
+<style>
+/* ============================================================
+   DESIGN TOKENS
+   Clinical instrument aesthetic: cool slate paper, clinical teal
+   primary, semantic safety states (safe / advisory / hard-stop).
+   The state-driven dose readout is the signature element.
+   No external fonts/assets — fully offline for GitHub Pages.
+   ============================================================ */
+:root{
+  --paper:#eef2f4;
+  --card:#ffffff;
+  --ink:#16242c;
+  --ink-soft:#5a6b74;
+  --ink-faint:#8a9aa2;
+  --line:#dde5e9;
+  --line-strong:#c6d2d8;
+
+  --teal:#0e6e78;
+  --teal-deep:#0a525a;
+  --teal-wash:#e6f1f2;
+
+  --safe:#1f8a52;
+  --safe-wash:#e7f4ec;
+  --advisory:#b56a06;
+  --advisory-wash:#fbf0dd;
+  --stop:#bf3636;
+  --stop-wash:#fbe9e9;
+
+  --radius:14px;
+  --radius-sm:9px;
+  --shadow:0 1px 2px rgba(22,36,44,.06), 0 6px 18px rgba(22,36,44,.06);
+  --mono:"SFMono-Regular",ui-monospace,"Menlo","Consolas","Roboto Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Inter","Roboto","Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  font-family:var(--sans);
+  color:var(--ink);
+  background:
+    radial-gradient(120% 60% at 50% -10%, #f7fafb 0%, var(--paper) 60%) fixed;
+  font-feature-settings:"tnum" 1,"lnum" 1;
+  -webkit-text-size-adjust:100%;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.wrap{max-width:560px;margin:0 auto;padding:0 16px 64px}
+
+/* ---------- App bar ---------- */
+.appbar{
+  position:sticky;top:0;z-index:30;
+  background:linear-gradient(180deg,var(--teal) 0%,var(--teal-deep) 100%);
+  color:#fff;
+  margin:0 -16px 18px;
+  padding:calc(env(safe-area-inset-top) + 14px) 16px 14px;
+  box-shadow:0 6px 20px rgba(10,82,90,.28);
+}
+.appbar-inner{max-width:560px;margin:0 auto;display:flex;align-items:center;gap:12px}
+.appbar h1{font-size:18px;line-height:1.1;margin:0;font-weight:650;letter-spacing:.2px}
+.appbar .sub{font-size:11.5px;opacity:.82;margin-top:3px;letter-spacing:.3px}
+.appbar .spacer{flex:1}
+.iconbtn{
+  appearance:none;border:1px solid rgba(255,255,255,.32);
+  background:rgba(255,255,255,.10);color:#fff;border-radius:10px;
+  width:40px;height:40px;display:grid;place-items:center;cursor:pointer;
+  transition:background .15s,transform .05s;
+}
+.iconbtn:hover{background:rgba(255,255,255,.22)}
+.iconbtn:active{transform:scale(.95)}
+.iconbtn svg{width:20px;height:20px;display:block}
+
+/* ---------- Mode banner ---------- */
+.mode{
+  display:flex;align-items:center;gap:9px;
+  font-size:12px;color:var(--ink-soft);
+  background:var(--card);border:1px solid var(--line);
+  border-radius:10px;padding:9px 12px;margin-bottom:16px;
+}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--safe);box-shadow:0 0 0 3px var(--safe-wash)}
+.mode b{color:var(--ink);font-weight:600}
+
+/* ---------- Section ---------- */
+.eyebrow{
+  font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
+  color:var(--teal);margin:22px 2px 9px;display:flex;align-items:center;gap:8px;
+}
+.eyebrow::after{content:"";flex:1;height:1px;background:var(--line)}
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);overflow:hidden;
+}
+
+/* ---------- Parameter rows ---------- */
+.param{
+  display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);
+}
+.param:last-child{border-bottom:none}
+.param .meta{flex:1;min-width:0}
+.param .name{font-size:15px;font-weight:600}
+.param .desc{font-size:11.5px;color:var(--ink-faint);margin-top:2px;line-height:1.35}
+.param .val{font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ink);white-space:nowrap}
+.param .val small{font-size:11px;color:var(--ink-faint);font-family:var(--sans);font-weight:500}
+.check{width:20px;height:20px;flex:none;color:var(--safe)}
+
+/* ---------- Patient inputs ---------- */
+.input-row{padding:14px 16px;border-bottom:1px solid var(--line)}
+.input-row:last-child{border-bottom:none}
+.input-top{display:flex;align-items:center;gap:12px}
+.input-label{flex:1}
+.input-label .name{font-size:15px;font-weight:600}
+.input-label .hint{font-size:11.5px;color:var(--ink-faint);margin-top:2px}
+.field{position:relative;width:128px;flex:none}
+.field input{
+  width:100%;font-family:var(--mono);font-size:22px;font-weight:600;text-align:right;
+  padding:10px 42px 10px 12px;border:1.5px solid var(--line-strong);border-radius:10px;
+  background:#fcfdfd;color:var(--ink);outline:none;transition:border-color .15s,box-shadow .15s;
+}
+.field input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-wash)}
+.field .unit{
+  position:absolute;right:12px;top:50%;transform:translateY(-50%);
+  font-size:12px;color:var(--ink-faint);pointer-events:none;
+}
+.subcalc{
+  font-family:var(--mono);font-size:12.5px;color:var(--ink-soft);
+  margin-top:9px;padding-left:1px;min-height:17px;
+}
+.subcalc b{color:var(--teal);font-weight:600}
+
+/* ---------- Dose panel (signature) ---------- */
+.dose{
+  margin-top:14px;border-radius:var(--radius);overflow:hidden;
+  border:1px solid var(--line);box-shadow:var(--shadow);
+  transition:background .2s,border-color .2s;
+}
+.dose-head{
+  padding:11px 16px;font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
+  border-bottom:1px solid var(--line);color:var(--ink-soft);display:flex;align-items:center;gap:8px;
+}
+.dose-body{padding:20px 16px}
+.dose-product{font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.dose-readout{display:flex;align-items:baseline;gap:10px}
+.dose-number{font-family:var(--mono);font-size:54px;line-height:.95;font-weight:700;letter-spacing:-1px;color:var(--teal-deep)}
+.dose-unit{font-size:16px;font-weight:600;color:var(--ink-soft)}
+.dose-formula{
+  font-family:var(--mono);font-size:12px;color:var(--ink-faint);
+  margin-top:12px;line-height:1.5;border-top:1px dashed var(--line);padding-top:11px;
+}
+/* state variants */
+.dose.is-safe .dose-head{color:var(--safe)}
+.dose.is-stop{border-color:var(--stop);background:var(--stop-wash)}
+.dose.is-stop .dose-head{color:var(--stop);border-bottom-color:rgba(191,54,54,.25)}
+.rescue-title{font-size:18px;font-weight:700;color:var(--stop);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.rescue-body{font-size:13.5px;color:#7a2b2b;line-height:1.5}
+.rescue-body strong{color:var(--stop)}
+
+/* ---------- Advisory chips ---------- */
+.advisories{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.advisory{
+  display:flex;gap:10px;font-size:12.5px;line-height:1.45;
+  padding:10px 12px;border-radius:10px;border:1px solid;
+}
+.advisory svg{width:17px;height:17px;flex:none;margin-top:1px}
+.advisory.warn{background:var(--advisory-wash);border-color:#eccf9a;color:#7a4a06}
+.advisory.warn svg{color:var(--advisory)}
+.advisory.info{background:var(--teal-wash);border-color:#bfe0e2;color:var(--teal-deep)}
+.advisory.info svg{color:var(--teal)}
+
+/* ---------- Buttons ---------- */
+.btn{
+  appearance:none;cursor:pointer;font-family:var(--sans);font-size:14.5px;font-weight:600;
+  border-radius:11px;padding:12px 16px;border:1px solid transparent;transition:filter .15s,transform .05s;
+}
+.btn:active{transform:scale(.985)}
+.btn-primary{background:var(--teal);color:#fff}
+.btn-primary:hover{filter:brightness(1.06)}
+.btn-ghost{background:#fff;color:var(--teal-deep);border-color:var(--line-strong)}
+.btn-ghost:hover{background:var(--teal-wash)}
+.btn-block{width:100%}
+
+/* ---------- Modal ---------- */
+.scrim{
+  position:fixed;inset:0;background:rgba(16,36,44,.42);backdrop-filter:blur(2px);
+  display:none;align-items:flex-end;justify-content:center;z-index:50;
+}
+.scrim.open{display:flex}
+.sheet{
+  background:var(--card);width:100%;max-width:560px;border-radius:20px 20px 0 0;
+  max-height:92vh;overflow:auto;box-shadow:0 -10px 40px rgba(16,36,44,.30);
+  padding-bottom:calc(env(safe-area-inset-bottom) + 16px);
+  animation:rise .22s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes rise{from{transform:translateY(28px);opacity:.6}to{transform:none;opacity:1}}
+@media(min-width:600px){.scrim{align-items:center}.sheet{border-radius:20px;max-height:88vh}}
+.sheet-head{
+  position:sticky;top:0;background:var(--card);display:flex;align-items:center;
+  padding:18px 18px 14px;border-bottom:1px solid var(--line);z-index:2;
+}
+.sheet-head h2{font-size:17px;margin:0;font-weight:650}
+.sheet-head .spacer{flex:1}
+.sheet-body{padding:18px}
+.set-group{margin-bottom:20px}
+.set-group > label{display:block;font-size:13px;font-weight:600;margin-bottom:7px;color:var(--ink)}
+.set-group .note{font-size:11.5px;color:var(--ink-faint);margin-top:6px;line-height:1.4}
+.set-input{
+  width:100%;font-family:var(--mono);font-size:16px;padding:11px 12px;
+  border:1.5px solid var(--line-strong);border-radius:10px;background:#fcfdfd;color:var(--ink);outline:none;
+}
+.set-input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-wash)}
+select.set-input{font-family:var(--sans);font-weight:500}
+.seg{display:flex;gap:8px}
+.seg button{
+  flex:1;padding:11px;border:1.5px solid var(--line-strong);background:#fcfdfd;border-radius:10px;
+  font-family:var(--mono);font-size:15px;font-weight:600;cursor:pointer;color:var(--ink-soft);
+}
+.seg button[aria-pressed="true"]{border-color:var(--teal);background:var(--teal-wash);color:var(--teal-deep)}
+.seg button:disabled{opacity:.5;cursor:not-allowed}
+.setmsg{margin-top:8px;font-size:12px;line-height:1.45;display:none;border-radius:9px;padding:9px 11px}
+.setmsg.show{display:block}
+.setmsg.warn{background:var(--advisory-wash);color:#7a4a06;border:1px solid #eccf9a}
+.setmsg.info{background:var(--teal-wash);color:var(--teal-deep);border:1px solid #bfe0e2}
+.sheet-foot{display:flex;gap:10px;padding:4px 18px 0}
+
+.disclaimer{
+  margin-top:26px;font-size:11px;color:var(--ink-faint);line-height:1.5;text-align:center;
+  padding:0 8px;
+}
+.disclaimer b{color:var(--ink-soft)}
+.adv-section summary{cursor:pointer;font-size:12px;color:var(--ink-soft);font-weight:600;list-style:none}
+.adv-section summary::-webkit-details-marker{display:none}
+.adv-section{margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--card)}
+.adv-section[open] summary{margin-bottom:10px}
+.kv{font-size:12px;color:var(--ink-soft);line-height:1.6}
+.kv code{font-family:var(--mono);background:var(--paper);padding:1px 5px;border-radius:4px;font-size:11.5px}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="appbar">
+  <div class="appbar-inner">
+    <div>
+      <h1>Insulin Dose Calculator</h1>
+      <div class="sub" id="barSub">Rapid-Acting · MAR Calculator</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="iconbtn" id="btnReset" title="Clear patient values" aria-label="Clear patient values">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+    </button>
+    <button class="iconbtn" id="btnSettings" title="Order parameters" aria-label="Order parameters">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="mode" id="modeBanner">
+    <span class="dot"></span>
+    <span><b>Standalone mode.</b> Parameters entered manually below — not connected to an EHR order.</span>
+  </div>
+
+  <!-- PARAMETERS -->
+  <div class="eyebrow">Parameters from order</div>
+  <div class="card" id="paramCard"></div>
+
+  <!-- PATIENT VALUES -->
+  <div class="eyebrow">Enter patient values</div>
+  <div class="card">
+    <div class="input-row">
+      <div class="input-top">
+        <div class="input-label">
+          <div class="name">Carbohydrates eaten</div>
+          <div class="hint" id="carbHint">Actual carb intake this meal</div>
+        </div>
+        <div class="field">
+          <input id="inCarbs" type="number" inputmode="decimal" min="0" step="1" placeholder="0" aria-label="Carbohydrates eaten in grams">
+          <span class="unit">g</span>
+        </div>
+      </div>
+      <div class="subcalc" id="carbSub"></div>
+    </div>
+    <div class="input-row">
+      <div class="input-top">
+        <div class="input-label">
+          <div class="name">Current blood glucose</div>
+          <div class="hint">Measured BG at time of administration</div>
+        </div>
+        <div class="field">
+          <input id="inBg" type="number" inputmode="decimal" min="0" max="1000" step="1" placeholder="0" aria-label="Current blood glucose in mg per dL">
+          <span class="unit">mg/dL</span>
+        </div>
+      </div>
+      <div class="subcalc" id="bgSub"></div>
+    </div>
+  </div>
+
+  <!-- DOSE READOUT -->
+  <div class="eyebrow">Recommended dose</div>
+  <div class="dose" id="dosePanel">
+    <div class="dose-head" id="doseHead">Calculated dose</div>
+    <div class="dose-body" id="doseBody"></div>
+  </div>
+
+  <div class="advisories" id="advisories"></div>
+
+  <details class="adv-section">
+    <summary>Deployment notes — FHIR SMART &amp; webhooks</summary>
+    <div class="kv" id="deployNotes"></div>
+  </details>
+
+  <div class="disclaimer">
+    <b>Internal working tool — not for clinical use</b> without pharmacy and informatics committee review.
+    Calculator is display-only and informational; it does not place orders or document administration.
+    mL volume is never displayed.
+  </div>
+</div>
+
+<!-- SETTINGS SHEET -->
+<div class="scrim" id="scrim">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Order parameters">
+    <div class="sheet-head">
+      <h2>Order parameters</h2>
+      <div class="spacer"></div>
+      <button class="iconbtn" id="btnCloseSheet" style="background:var(--paper);border-color:var(--line);color:var(--ink-soft)" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+
+      <div class="set-group">
+        <label for="setConc">Insulin product / concentration</label>
+        <select id="setConc" class="set-input">
+          <option value="U100">U-100 Standard — dosed in Units</option>
+          <option value="U10">U-10 Dilute — dosed in Syringe Units (infants ≤ 12 mo)</option>
+        </select>
+        <div class="note" id="concNote"></div>
+      </div>
+
+      <div class="set-group" id="ageGroup">
+        <label for="setAge">Patient age band (sets target BG range)</label>
+        <select id="setAge" class="set-input"></select>
+        <div class="note" id="ageNote"></div>
+      </div>
+
+      <div class="set-group">
+        <label for="setIc">Insulin : carb ratio</label>
+        <input id="setIc" class="set-input" type="number" inputmode="decimal" step="0.5" placeholder="e.g. 15">
+        <div class="note" id="icNote"></div>
+        <div class="setmsg" id="icMsg"></div>
+      </div>
+
+      <div class="set-group">
+        <label for="setCf">Correction factor (ISF)</label>
+        <input id="setCf" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 30">
+        <div class="note" id="cfNote"></div>
+        <div class="setmsg" id="cfMsg"></div>
+      </div>
+
+      <div class="set-group">
+        <label for="setTarget">Target blood glucose</label>
+        <input id="setTarget" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 120">
+        <div class="note" id="targetNote"></div>
+        <div class="setmsg" id="targetMsg"></div>
+      </div>
+
+      <div class="set-group">
+        <label>Rounding increment</label>
+        <div class="seg" id="setRound"></div>
+        <div class="note" id="roundNote"></div>
+      </div>
+
+      <details class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
+        <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Advanced — result webhook (optional)</summary>
+        <div style="margin-top:12px">
+          <input id="setWebhook" class="set-input" type="url" placeholder="https://… (leave blank for standalone)" style="font-family:var(--mono);font-size:13px">
+          <div class="note">When set, each calculated dose is POSTed as JSON. In a SMART deployment this is replaced by a CDS Hooks / documentation call. Leave blank to keep everything on-device.</div>
+        </div>
+      </details>
+
+    </div>
+    <div class="sheet-foot">
+      <button class="btn btn-ghost" id="btnCancel" style="flex:1">Cancel</button>
+      <button class="btn btn-primary" id="btnSave" style="flex:2">Save parameters</button>
+    </div>
+    <div style="height:8px"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+ *  INSULIN DOSE CALCULATOR — Pediatric Rapid-Acting CDS
+ *  Single-file, offline-capable, GitHub-Pages-ready.
+ *
+ *  ARCHITECTURE (deliberately layered so the same core deploys as a SMART app)
+ *    1. CDS_CONFIG      — all rule constants from the CDS algorithm doc.
+ *    2. Engine          — PURE functions: validation + dose computation.
+ *                         No DOM, no globals. Reuse verbatim in a SMART app.
+ *    3. ParameterSource — pluggable order-parameter provider.
+ *                         StandaloneParameterSource (this build) <-> FhirParameterSource (stub).
+ *    4. Hooks           — event bus + webhook dispatcher (no-op standalone,
+ *                         becomes CDS Hooks / documentation POST under SMART).
+ *    5. SmartLaunch     — stub for SMART-on-FHIR OAuth2 launch.
+ *    6. UI              — the only layer that touches the DOM.
+ *
+ *  Authoritative spec = Insulin_CDS_Algorithm + ProcessFlow.
+ *  NOTE: rounding is CEILING (round up) per resolved item D6 — this differs
+ *        from the legacy PNG mockup, which rounded down.
+ * ==========================================================================*/
+
+/* =========================== 1. CDS_CONFIG ============================== */
+const CDS_CONFIG = {
+  concentrations: {
+    U100: {
+      key:"U100", label:"U-100 Standard",
+      product:"insulin lispro (Humalog) U-100",
+      unit:"Units", unitShort:"units",
+      ic:{ min:2,   max:100 },
+      cf:{ min:8,   max:300, advisoryAbove:150 },
+      carb:{ entryMin:0, entryMax:300, formulaCap:250 },
+      targetBands:{
+        lt5:  { label:"< 5 years",  min:130, max:200 },
+        a5_11:{ label:"5–11 years", min:70,  max:180 },
+        gte12:{ label:"≥ 12 years", min:70,  max:150 }
+      },
+      rounding:{ options:[0.5,1], def:0.5, fixed:false }
+    },
+    U10: {
+      key:"U10", label:"U-10 Dilute",
+      product:"insulin lispro (Humalog) U-10 dilute",
+      unit:"Syringe Units", unitShort:"syringe units",
+      ic:{ min:1.5, max:100 },
+      cf:{ min:10,  max:200, advisoryAbove:null },
+      carb:{ entryMin:0, entryMax:99, formulaCap:99 },
+      targetBands:{
+        infant:{ label:"≤ 12 months", min:120, max:300 }
+      },
+      rounding:{ options:[1], def:1, fixed:true }
+    }
+  },
+  bg:{ entryMin:0, entryMax:1000, criticalHypo:0, hypoThreshold:70, formulaCap:600 }
+};
+
+/* ============================ 2. Engine ================================= */
+/* Pure. Given parameters + nurse inputs, returns a structured result object. */
+const Engine = (() => {
+
+  const round2 = n => Math.round(n*100)/100;
+
+  // Ceiling to an increment, with tiny tolerance so exact multiples don't bump up.
+  function ceilTo(value, inc){
+    if(!(inc>0)) return value;
+    const f = 1/inc;
+    return Math.round(Math.ceil(value*f - 1e-9))/f;
+  }
+
+  /* Validate a single order parameter against OEF ranges.
+     Mirrors order-entry CDS: out-of-range snaps to boundary (hard stop in EHR);
+     U-100 CF > 150 is a soft advisory (proceed allowed). */
+  function validateParameter(field, raw, conc, ageBandKey){
+    const C = CDS_CONFIG.concentrations[conc];
+    const num = parseFloat(raw);
+    if(raw === "" || raw == null || isNaN(num)){
+      return { ok:false, empty:true, value:null, message:"Enter a value." };
+    }
+    let range, name;
+    if(field === "ic"){ range = C.ic; name = "Insulin:carb ratio"; }
+    else if(field === "cf"){ range = C.cf; name = "Correction factor"; }
+    else if(field === "target"){
+      const band = C.targetBands[ageBandKey] || Object.values(C.targetBands)[0];
+      range = band; name = "Target BG";
+    }
+    let value = num, corrected = false, advisory = null, message = null;
+    if(num < range.min){ value = range.min; corrected = true;
+      message = `${name} ${round2(num)} is below the allowed minimum. Corrected to ${range.min}.`; }
+    else if(num > range.max){ value = range.max; corrected = true;
+      message = `${name} ${round2(num)} is above the allowed maximum. Corrected to ${range.max}.`; }
+    // soft advisory: U-100 CF > 150
+    if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove){
+      advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
+    }
+    return { ok:true, value, corrected, advisory, message, range };
+  }
+
+  /* Core dose computation. Returns everything the UI / a webhook needs. */
+  function computeDose(params, inputs){
+    const C = CDS_CONFIG.concentrations[params.conc];
+    const BG = CDS_CONFIG.bg;
+    const carbs = (inputs.carbs === "" || inputs.carbs == null) ? null : parseFloat(inputs.carbs);
+    const bg    = (inputs.bg    === "" || inputs.bg    == null) ? null : parseFloat(inputs.bg);
+
+    const res = {
+      conc:params.conc, unit:C.unit, product:C.product,
+      state:"INCOMPLETE",      // INCOMPLETE | CRITICAL_HYPO | HYPO | DOSE
+      doseSuppressed:false,
+      carbsEntered:carbs, bgEntered:bg,
+      carbsUsed:null, bgUsedForCorrection:null,
+      prandial:0, correction:0, totalUnrounded:0, totalRounded:null,
+      carbCapApplied:false, bgCapApplied:false, correctionFloored:false,
+      advisories:[], rescue:null,
+      params:{ ic:params.ic, cf:params.cf, target:params.target, increment:params.increment }
+    };
+
+    // --- BG guards first (most severe wins) ---
+    if(bg != null){
+      if(bg === BG.criticalHypo){
+        res.state = "CRITICAL_HYPO"; res.doseSuppressed = true;
+        res.rescue = { level:"critical", title:"Critical hypoglycemia",
+          body:"All dose output suppressed. Treat per hypoglycemia protocol (juice / D10 / glucagon). Recheck BG before any insulin administration." };
+        return res;
+      }
+      if(bg < BG.hypoThreshold){
+        res.state = "HYPO"; res.doseSuppressed = true;
+        res.rescue = { level:"hypo", title:"Hypoglycemia — no insulin",
+          body:"All dose components suppressed. Treat hypoglycemia per protocol (juice / D10 / glucagon). Recheck BG; a new entry is required for any subsequent dose." };
+        return res;
+      }
+    }
+
+    // need both inputs to produce a dose
+    if(carbs == null || bg == null){ res.state = "INCOMPLETE"; return res; }
+
+    // --- Carb cap (prandial) ---
+    let carbsUsed = carbs;
+    if(carbs > C.carb.formulaCap){
+      carbsUsed = C.carb.formulaCap; res.carbCapApplied = true;
+      res.advisories.push({ type:"warn",
+        text:`Carb entry exceeds ${C.carb.formulaCap} g limit. Prandial dose calculated using ${C.carb.formulaCap} g. Entered value retained for verification.` });
+    }
+    res.carbsUsed = carbsUsed;
+    res.prandial = round2(carbsUsed / params.ic);
+
+    // --- BG cap (correction only) ---
+    let bgForCorr = bg;
+    if(bg > BG.formulaCap){
+      bgForCorr = BG.formulaCap; res.bgCapApplied = true;
+      res.advisories.push({ type:"warn",
+        text:`BG exceeds ${BG.formulaCap} mg/dL formula limit. Correction dose calculated using ${BG.formulaCap} mg/dL. Prandial dose unaffected.` });
+    }
+    res.bgUsedForCorrection = bgForCorr;
+
+    // --- Correction (floor 0; only when BG > target) ---
+    if(bgForCorr > params.target){
+      res.correction = round2((bgForCorr - params.target) / params.cf);
+    } else {
+      res.correction = 0; res.correctionFloored = true;
+    }
+
+    // --- Sum + ceiling rounding ---
+    res.totalUnrounded = round2(res.prandial + res.correction);
+    res.totalRounded   = ceilTo(res.totalUnrounded, params.increment);
+    res.state = "DOSE";
+
+    // informational notes
+    if(carbs === 0){
+      res.advisories.push({ type:"info", text:"Zero carbohydrates entered — dose covers correction only." });
+    }
+    if(res.correctionFloored && bg > 0){
+      res.advisories.push({ type:"info", text:`BG at or below target (${params.target} mg/dL) — no correction component. Prandial dose only.` });
+    }
+    return res;
+  }
+
+  return { validateParameter, computeDose, ceilTo, round2 };
+})();
+
+/* ======================= 3. ParameterSource ============================ */
+/* Standalone: read/write order parameters from localStorage (settings sheet). */
+const StandaloneParameterSource = (() => {
+  const KEY = "insulinCalc.params.v1";
+  const defaults = {
+    conc:"U100", ageBand:"a5_11",
+    ic:15, cf:30, target:120, increment:0.5, webhook:""
+  };
+  function load(){
+    try{ const s = JSON.parse(localStorage.getItem(KEY)); return s ? {...defaults, ...s} : {...defaults}; }
+    catch(e){ return {...defaults}; }
+  }
+  function save(p){ try{ localStorage.setItem(KEY, JSON.stringify(p)); }catch(e){} }
+  return { load, save, defaults, supportsLiveOrder:false, mode:"standalone" };
+})();
+
+/* SMART deployment (stub): map a FHIR MedicationRequest -> the same params shape.
+   Wire this in place of StandaloneParameterSource when launched from an EHR.
+   Expected mapping (institution-specific — confirm with build):
+     conc      <- orderable identity (separate U-100 / U-10 catalog items)
+     ic, cf    <- dosageInstruction extensions or order detail fields
+     target    <- ordered target BG field (age-stratified at order entry)
+     increment <- prescriber rounding toggle (U-10 fixed = 1)
+   Current BG may be pre-filled from a glucose Observation (LOINC 2339-0),
+   but the nurse confirms point-of-care BG before dosing. */
+const FhirParameterSource = {
+  supportsLiveOrder:true, mode:"smart",
+  async load(/* fhirClient */){
+    throw new Error("FhirParameterSource.load() not implemented — supply a SMART fhirClient and map MedicationRequest fields to the params shape above.");
+  }
+};
+
+/* ============================ 4. Hooks ================================= */
+/* Event bus + optional webhook. Standalone = on-device; under SMART this
+   becomes the CDS Hooks card / documentation POST surface. */
+const Hooks = (() => {
+  const listeners = { doseCalculated:[], advisory:[], hardStop:[], parametersSaved:[] };
+  function on(evt, fn){ (listeners[evt] || (listeners[evt]=[])).push(fn); }
+  function emit(evt, payload){ (listeners[evt]||[]).forEach(fn => { try{ fn(payload); }catch(e){ console.error(e); } }); }
+  async function dispatchWebhook(url, payload){
+    if(!url) return;                          // standalone default: no network
+    try{
+      await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ source:"insulin-calc", ts:new Date().toISOString(), ...payload }) });
+    }catch(e){ console.warn("Webhook delivery failed:", e); }
+  }
+  return { on, emit, dispatchWebhook };
+})();
+
+/* ========================== 5. SmartLaunch ============================= */
+/* Stub: drop in fhirclient (client-js) here to go live as a SMART app.
+   No-op in standalone. */
+const SmartLaunch = {
+  config:{
+    clientId:"REPLACE_ME",
+    scope:"launch patient/MedicationRequest.read patient/Observation.read",
+    redirectUri: location.origin + location.pathname,
+    iss:null
+  },
+  isSmartLaunch(){ const q = new URLSearchParams(location.search); return q.has("iss") || q.has("launch"); },
+  async authorize(){ throw new Error("SMART launch not configured. Add fhirclient and call FHIR.oauth2.authorize(this.config)."); }
+};
+
+/* ============================== 6. UI ================================== */
+const UI = (() => {
+  const $ = id => document.getElementById(id);
+  let params = StandaloneParameterSource.load();
+
+  const SVG = {
+    check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="check"><path d="M20 6 9 17l-5-5"/></svg>',
+    warn:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+    info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+    stop:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>'
+  };
+  const fmt = n => (Number.isInteger(n) ? n.toString() : n.toFixed(2).replace(/0+$/,"").replace(/\.$/,""));
+
+  /* ---- render the parameter card from current params ---- */
+  function renderParams(){
+    const C = CDS_CONFIG.concentrations[params.conc];
+    const band = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
+    $("barSub").textContent = `${C.label} · dosed in ${C.unit}`;
+    const rows = [
+      { name:"Insulin : carb ratio", desc:`1 ${C.unitShort.replace(/s$/,'')} covers ${fmt(params.ic)} g carbohydrate`,
+        val:`${fmt(params.ic)} <small>g/${C.unit==='Units'?'U':'SU'}</small>` },
+      { name:"Correction factor", desc:`1 ${C.unitShort.replace(/s$/,'')} lowers BG by ${fmt(params.cf)} mg/dL`,
+        val:`${fmt(params.cf)} <small>mg/dL</small>` },
+      { name:"Target blood glucose", desc:`Correction applies only above target (${band.label})`,
+        val:`${fmt(params.target)} <small>mg/dL</small>` },
+      { name:"Rounding", desc:`Always rounds up to the nearest increment`,
+        val:`${fmt(params.increment)} <small>${C.unit==='Units'?'unit':'SU'}</small>` }
+    ];
+    $("paramCard").innerHTML = rows.map(r => `
+      <div class="param">
+        <div class="meta"><div class="name">${r.name}</div><div class="desc">${r.desc}</div></div>
+        ${SVG.check}
+        <div class="val">${r.val}</div>
+      </div>`).join("");
+
+    const C2 = CDS_CONFIG.concentrations[params.conc];
+    $("inCarbs").max = C2.carb.entryMax;
+    $("carbHint").textContent = `Entry 0–${C2.carb.entryMax} g` +
+      (C2.carb.formulaCap < C2.carb.entryMax ? ` · prandial capped at ${C2.carb.formulaCap} g` : "");
+  }
+
+  /* ---- live recompute + render dose ---- */
+  function recompute(){
+    const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim() };
+    const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target, increment:params.increment };
+    const r = Engine.computeDose(p, inputs);
+    const C = CDS_CONFIG.concentrations[params.conc];
+
+    // sub-calcs under each field
+    $("carbSub").innerHTML = (r.carbsEntered != null && r.state !== "CRITICAL_HYPO" && r.state !== "HYPO")
+      ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${C.unit==='Units'?'units':'SU'}</b>`
+      : "";
+    $("bgSub").innerHTML = (r.bgEntered != null && r.state === "DOSE")
+      ? (r.correctionFloored
+          ? `BG ≤ target → <b>no correction</b>`
+          : `Correction = (${fmt(r.bgUsedForCorrection)} − ${fmt(params.target)}) ÷ ${fmt(params.cf)} = <b>${fmt(r.correction)} ${C.unit==='Units'?'units':'SU'}</b>`)
+      : "";
+
+    renderDose(r, C);
+    renderAdvisories(r);
+
+    // fire hooks
+    if(r.state === "DOSE"){
+      Hooks.emit("doseCalculated", r);
+      Hooks.dispatchWebhook(params.webhook, { event:"doseCalculated", result:r });
+    } else if(r.state === "CRITICAL_HYPO" || r.state === "HYPO"){
+      Hooks.emit("hardStop", r);
+    }
+  }
+
+  function renderDose(r, C){
+    const panel = $("dosePanel"), head = $("doseHead"), body = $("doseBody");
+    panel.className = "dose";
+    if(r.state === "CRITICAL_HYPO" || r.state === "HYPO"){
+      panel.classList.add("is-stop");
+      head.textContent = r.state === "CRITICAL_HYPO" ? "Critical hypoglycemia" : "Hypoglycemia";
+      body.innerHTML = `
+        <div class="rescue-title">${SVG.stop}<span>${r.rescue.title}</span></div>
+        <div class="rescue-body">${r.rescue.body}</div>`;
+      return;
+    }
+    if(r.state === "INCOMPLETE"){
+      head.textContent = "Calculated dose";
+      body.innerHTML = `
+        <div class="dose-product">${C.product}</div>
+        <div class="dose-readout"><span class="dose-number" style="color:var(--ink-faint)">—</span>
+          <span class="dose-unit">${C.unit}</span></div>
+        <div class="dose-formula">Enter carbohydrates eaten and current blood glucose to calculate.</div>`;
+      return;
+    }
+    // DOSE
+    panel.classList.add("is-safe");
+    head.textContent = "Recommended dose";
+    const bump = r.totalRounded !== r.totalUnrounded;
+    body.innerHTML = `
+      <div class="dose-product">${C.product}</div>
+      <div class="dose-readout">
+        <span class="dose-number">${fmt(r.totalRounded)}</span>
+        <span class="dose-unit">${C.unit}</span>
+      </div>
+      <div class="dose-formula">
+        ${fmt(r.prandial)} (carb) + ${fmt(r.correction)} (correction) = ${fmt(r.totalUnrounded)}
+        ${bump ? ` → rounds up to <b style="color:var(--teal-deep)">${fmt(r.totalRounded)}</b>` : ` (exact)`}
+        · increment ${fmt(params.increment)} ${C.unit==='Units'?'unit':'SU'}
+      </div>`;
+  }
+
+  function renderAdvisories(r){
+    const host = $("advisories");
+    if(!r.advisories.length){ host.innerHTML = ""; return; }
+    host.innerHTML = r.advisories.map(a => `
+      <div class="advisory ${a.type==='warn'?'warn':'info'}">
+        ${a.type==='warn'?SVG.warn:SVG.info}<div>${a.text}</div>
+      </div>`).join("");
+  }
+
+  /* ---------------- Settings sheet ---------------- */
+  function openSheet(){
+    const s = $("setConc"); s.value = params.conc;
+    syncConcDependent();
+    $("setIc").value = params.ic;
+    $("setCf").value = params.cf;
+    $("setTarget").value = params.target;
+    $("setWebhook").value = params.webhook || "";
+    $("setAge").value = params.ageBand;
+    renderRoundSeg();
+    refreshSetNotes();
+    clearSetMsgs();
+    $("scrim").classList.add("open");
+  }
+  function closeSheet(){ $("scrim").classList.remove("open"); }
+
+  function syncConcDependent(){
+    const conc = $("setConc").value;
+    const C = CDS_CONFIG.concentrations[conc];
+    // age band options
+    const ageSel = $("setAge");
+    ageSel.innerHTML = Object.entries(C.targetBands)
+      .map(([k,b]) => `<option value="${k}">${b.label}</option>`).join("");
+    // U-10 has a single band; hide selector but keep it valid
+    $("ageGroup").style.display = (Object.keys(C.targetBands).length > 1) ? "" : "none";
+    if(Object.keys(C.targetBands).length === 1) ageSel.value = Object.keys(C.targetBands)[0];
+    $("concNote").textContent = conc === "U10"
+      ? "U-10 uses syringe units calibrated to U-100 markings — no concentration conversion, mL never shown."
+      : "Standard U-100 product. Dose displayed in Units.";
+    renderRoundSeg();
+    refreshSetNotes();
+  }
+
+  function renderRoundSeg(){
+    const conc = $("setConc").value;
+    const C = CDS_CONFIG.concentrations[conc];
+    const cur = (conc === params.conc) ? params.increment : C.rounding.def;
+    const host = $("setRound");
+    host.innerHTML = C.rounding.options.map(opt => {
+      const lbl = C.unit==='Units' ? `${opt} unit` : `${opt} SU`;
+      const pressed = (Math.abs(opt - (host.dataset.val ? parseFloat(host.dataset.val) : cur)) < 1e-9);
+      return `<button type="button" data-inc="${opt}" aria-pressed="${pressed}" ${C.rounding.fixed?'disabled':''}>${lbl}</button>`;
+    }).join("");
+    host.dataset.val = (host.dataset.val && C.rounding.options.some(o=>Math.abs(o-parseFloat(host.dataset.val))<1e-9))
+      ? host.dataset.val : (C.rounding.fixed ? C.rounding.options[0] : cur);
+    // ensure pressed reflects dataset
+    [...host.children].forEach(b => b.setAttribute("aria-pressed",
+      Math.abs(parseFloat(b.dataset.inc) - parseFloat(host.dataset.val)) < 1e-9));
+    $("roundNote").textContent = C.rounding.fixed
+      ? "U-10 Dilute always rounds up to the nearest whole syringe unit (fixed)."
+      : "Set by prescriber at order entry. Always rounds up.";
+  }
+
+  function refreshSetNotes(){
+    const conc = $("setConc").value;
+    const C = CDS_CONFIG.concentrations[conc];
+    $("icNote").textContent = `Allowed ${C.ic.min}–${C.ic.max} g per ${C.unit==='Units'?'unit':'syringe unit'}.`;
+    $("cfNote").textContent = `Allowed ${C.cf.min}–${C.cf.max} mg/dL per ${C.unit==='Units'?'unit':'syringe unit'}`
+      + (C.cf.advisoryAbove ? ` · soft advisory above ${C.cf.advisoryAbove}.` : ".");
+    const band = C.targetBands[$("setAge").value] || Object.values(C.targetBands)[0];
+    $("targetNote").textContent = `Allowed ${band.min}–${band.max} mg/dL for ${band.label}.`;
+    $("ageNote").textContent = "U-100 target BG range tightens with age.";
+  }
+
+  function clearSetMsgs(){ ["icMsg","cfMsg","targetMsg"].forEach(id => { const e=$(id); e.className="setmsg"; e.textContent=""; }); }
+  function showSetMsg(id, kind, text){ const e=$(id); e.className=`setmsg show ${kind}`; e.textContent=text; }
+
+  function save(){
+    clearSetMsgs();
+    const conc = $("setConc").value;
+    const ageBand = ($("setAge").value) || Object.keys(CDS_CONFIG.concentrations[conc].targetBands)[0];
+    const inc = parseFloat($("setRound").dataset.val);
+
+    const vIc = Engine.validateParameter("ic", $("setIc").value, conc, ageBand);
+    const vCf = Engine.validateParameter("cf", $("setCf").value, conc, ageBand);
+    const vTg = Engine.validateParameter("target", $("setTarget").value, conc, ageBand);
+
+    let blocked = false;
+    [["ic",vIc,"setIc","icMsg"],["cf",vCf,"setCf","cfMsg"],["target",vTg,"setTarget","targetMsg"]]
+      .forEach(([f,v,inputId,msgId]) => {
+        if(v.empty){ showSetMsg(msgId,"warn","Enter a value."); blocked = true; return; }
+        if(v.corrected){ $(inputId).value = v.value; showSetMsg(msgId,"warn",v.message); }
+        if(v.advisory){ showSetMsg(msgId,"info",v.advisory); }
+      });
+    if(blocked) return;   // require all three present
+
+    params = { conc, ageBand, ic:vIc.value, cf:vCf.value, target:vTg.value,
+               increment:inc, webhook:$("setWebhook").value.trim() };
+    StandaloneParameterSource.save(params);
+    Hooks.emit("parametersSaved", params);
+    renderParams();
+    recompute();
+    // if a correction/advisory was shown, keep sheet open briefly; else close
+    const anyMsg = ["icMsg","cfMsg","targetMsg"].some(id => $(id).classList.contains("show"));
+    if(!anyMsg) closeSheet();
+  }
+
+  /* ---------------- Deployment notes ---------------- */
+  function renderDeployNotes(){
+    $("deployNotes").innerHTML = `
+      The CDS rule constants, the validation logic, and <code>Engine.computeDose()</code> are pure and DOM-free —
+      reuse them unchanged in a SMART app. To go live from an EHR:
+      <br>· Swap <code>StandaloneParameterSource</code> for <code>FhirParameterSource</code> and map the
+      MedicationRequest order fields to the params shape.
+      <br>· Replace the settings sheet with order-derived, read-only parameters.
+      <br>· Point <code>Hooks.dispatchWebhook</code> at your CDS Hooks / documentation endpoint, or wire
+      <code>Hooks.on('doseCalculated', …)</code> to a SMART scope write.
+      <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.`;
+  }
+
+  /* ---------------- wire up ---------------- */
+  function init(){
+    renderParams();
+    renderDeployNotes();
+    recompute();
+
+    $("inCarbs").addEventListener("input", recompute);
+    $("inBg").addEventListener("input", function(){
+      // hard entry ceiling: reject > 1000
+      if(this.value !== "" && parseFloat(this.value) > CDS_CONFIG.bg.entryMax){
+        this.value = CDS_CONFIG.bg.entryMax;
+      }
+      recompute();
+    });
+
+    $("btnReset").addEventListener("click", () => { $("inCarbs").value=""; $("inBg").value=""; recompute(); $("inCarbs").focus(); });
+    $("btnSettings").addEventListener("click", openSheet);
+    $("btnCloseSheet").addEventListener("click", closeSheet);
+    $("btnCancel").addEventListener("click", closeSheet);
+    $("btnSave").addEventListener("click", save);
+    $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
+    document.addEventListener("keydown", e => { if(e.key === "Escape") closeSheet(); });
+
+    $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); });
+    $("setAge").addEventListener("change", refreshSetNotes);
+    $("setRound").addEventListener("click", e => {
+      const b = e.target.closest("button[data-inc]"); if(!b || b.disabled) return;
+      $("setRound").dataset.val = b.dataset.inc;
+      [...$("setRound").children].forEach(x => x.setAttribute("aria-pressed", x===b ? "true":"false"));
+    });
+
+    // If launched with SMART params, surface it (no auto-auth in this build).
+    if(SmartLaunch.isSmartLaunch()){
+      const m = $("modeBanner");
+      m.querySelector("b").textContent = "SMART launch detected.";
+      m.querySelector("span:last-child").innerHTML =
+        "<b>SMART launch detected.</b> This build runs standalone; configure SmartLaunch + FhirParameterSource to go live.";
+    }
+  }
+
+  return { init };
+})();
+
+document.addEventListener("DOMContentLoaded", UI.init);
+</script>
+</body>
+</html>
