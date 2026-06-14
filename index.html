@@ -824,11 +824,12 @@ const UI = (() => {
     { key:"lunch",     label:"Lunch",     icon:"Lunch_216.png" },
     { key:"dinner",    label:"Dinner",    icon:"Dinner_216.png" },
     { key:"snack",     label:"Snack",     icon:"Snack_216.png" },
-    { key:"bedtime",   label:"Bedtime",   icon:"Bedtime_216.png" }
+    { key:"bedtime",   label:"Bedtime",   icon:"Bedtime_216.png" },
+    { key:"formula",   label:"Formula",   icon:"Formula_216.png" }
   ];
   let confirmed = new Set();   // which order-detail rows the RN has touch-confirmed
   let mealKey = null;          // selected meal/order (visual cue only)
-  let mealAuto = false;        // true when defaulted by time of day (vs. manually picked)
+  let mealAuto = false;        // true when defaulted (by product or time) vs. manually picked
 
   // Default the order by time of day. Windows per Clinical Standard Work; gaps = snack.
   function mealForTime(date){
@@ -839,6 +840,11 @@ const UI = (() => {
     if(within(17,19)) return "dinner";
     if(m >= 21*60 || m < 5*60) return "bedtime";   // 21:00–05:00 wraps midnight
     return "snack";
+  }
+  // Dilute insulin is given in formula/milk to infants — Formula is the right cue at
+  // any time of day. U-100 defaults by time of day (Formula still selectable manually).
+  function defaultMeal(conc, date){
+    return conc === "U10" ? "formula" : mealForTime(date);
   }
 
   const SVG = {
@@ -931,7 +937,9 @@ const UI = (() => {
     if(m){
       $("mealIcon").innerHTML = `<img src="${m.icon}" alt="${m.label}">`;
       $("mealLabel").textContent = m.label;
-      $("mealSub").textContent = mealAuto ? "Defaulted by time of day · tap to change" : "Order selected · tap to change";
+      $("mealSub").textContent = !mealAuto ? "Order selected · tap to change"
+        : (mealKey === "formula" ? "Default for dilute insulin · tap to change"
+                                 : "Defaulted by time of day · tap to change");
     } else {
       $("mealIcon").innerHTML = `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
       $("mealLabel").textContent = "Select order";
@@ -1189,11 +1197,14 @@ const UI = (() => {
     });
     if(blocked) return;
 
+    const concChanged = conc !== params.conc;
     params = { conc, ageBand, ic:vIc.value, cf:vCf.value, target:vTg.value,
                increment:inc, webhook:$("setWebhook").value.trim(),
                requireConfirm:$("setConfirm").checked };
     StandaloneParameterSource.save(params);
     Hooks.emit("parametersSaved", params);
+    // Switching to dilute (or back to U-100) re-defaults the order cue.
+    if(concChanged){ mealKey = defaultMeal(conc, new Date()); mealAuto = true; renderMeal(); }
     resetConfirmations();   // changed order details must be re-confirmed
     renderParams();
     // Keep sheet open if a correction/advisory is still shown so the nurse can verify; else close.
@@ -1247,7 +1258,7 @@ const UI = (() => {
 
   /* ---------------- wire up ---------------- */
   function init(){
-    mealKey = mealForTime(new Date()); mealAuto = true;
+    mealKey = defaultMeal(params.conc, new Date()); mealAuto = true;
     renderMeal();
     renderParams();
     renderDeployNotes();
