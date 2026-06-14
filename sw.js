@@ -15,7 +15,7 @@
  *  · Non-GET / cross-origin (e.g. the optional result webhook) -> passthrough.
  * ===========================================================================*/
 
-const VERSION = "v1.2.4";
+const VERSION = "v1.2.6";
 const CACHE = `insulin-calc-${VERSION}`;
 
 // App shell — fully self-contained, no external assets.
