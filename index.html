@@ -578,9 +578,9 @@ const CDS_CONFIG = {
       cf:{ min:8,   max:300, advisoryAbove:150 },
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
       targetBands:{
-        lt5:  { label:"< 5 years",  min:130, max:200 },
-        a5_11:{ label:"5–11 years", min:70,  max:180 },
-        gte12:{ label:"≥ 12 years", min:70,  max:150 }
+        lt5:  { label:"< 5 years",  min:130, max:200, def:{ ic:40, cf:100, target:150, increment:0.5 } },
+        a5_11:{ label:"5–11 years", min:70,  max:180, def:{ ic:15, cf:50,  target:150, increment:0.5 } },
+        gte12:{ label:"≥ 12 years", min:70,  max:150, def:{ ic:10, cf:25,  target:120, increment:0.5 } }
       },
       rounding:{ options:[0.5,1], def:0.5, fixed:false }
     },
@@ -592,7 +592,7 @@ const CDS_CONFIG = {
       cf:{ min:10,  max:200, advisoryAbove:null },
       carb:{ entryMin:0, entryMax:99, formulaCap:99 },
       targetBands:{
-        infant:{ label:"≤ 12 months", min:120, max:300 }
+        infant:{ label:"≤ 12 months", min:120, max:300, def:{ ic:20, cf:25, target:150, increment:1 } }
       },
       rounding:{ options:[1], def:1, fixed:true }
     }
@@ -744,7 +744,7 @@ const StandaloneParameterSource = (() => {
   const KEY = "insulinCalc.params.v1";
   const defaults = {
     conc:"U100", ageBand:"a5_11",
-    ic:15, cf:30, target:120, increment:0.5, webhook:"", requireConfirm:true
+    ic:15, cf:50, target:150, increment:0.5, webhook:"", requireConfirm:true
   };
   function load(){
     try{ const s = JSON.parse(localStorage.getItem(KEY)); return s ? {...defaults, ...s} : {...defaults}; }
@@ -1107,6 +1107,20 @@ const UI = (() => {
     $("ageNote").textContent = "U-100 target BG range tightens with age.";
   }
 
+  // Populate I:C / CF / Target / Rounding with the data-derived defaults for the
+  // selected concentration + age band. RN may override afterward.
+  function applyBandDefaults(conc, ageBand){
+    const band = (CDS_CONFIG.concentrations[conc].targetBands || {})[ageBand];
+    if(!band || !band.def) return;          // e.g. U-10 has no per-band defaults
+    const d = band.def;
+    $("setIc").value = d.ic;
+    $("setCf").value = d.cf;
+    $("setTarget").value = d.target;
+    $("setRound").dataset.val = d.increment;
+    [...$("setRound").children].forEach(b =>
+      b.setAttribute("aria-pressed", Math.abs(parseFloat(b.dataset.inc) - d.increment) < 1e-9 ? "true" : "false"));
+  }
+
   function clearSetMsgs(){ ["icMsg","cfMsg","targetMsg"].forEach(clearOne); }
   function clearOne(id){ const e=$(id); e.className="setmsg"; e.innerHTML=""; }
   function showSetMsg(id, kind, text){
@@ -1266,8 +1280,8 @@ const UI = (() => {
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
     document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeSheet(); closeMealSheet(); } });
 
-    $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); revalidateAll(); });
-    $("setAge").addEventListener("change", () => { refreshSetNotes(); revalidateAll(); });
+    $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
+    $("setAge").addEventListener("change", () => { applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
     $("setIc").addEventListener("blur", () => validateField("ic","setIc","icMsg",true));
     $("setCf").addEventListener("blur", () => validateField("cf","setCf","cfMsg",true));
     $("setTarget").addEventListener("blur", () => validateField("target","setTarget","targetMsg",true));
