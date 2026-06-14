@@ -828,6 +828,18 @@ const UI = (() => {
   ];
   let confirmed = new Set();   // which order-detail rows the RN has touch-confirmed
   let mealKey = null;          // selected meal/order (visual cue only)
+  let mealAuto = false;        // true when defaulted by time of day (vs. manually picked)
+
+  // Default the order by time of day. Windows per Clinical Standard Work; gaps = snack.
+  function mealForTime(date){
+    const m = date.getHours()*60 + date.getMinutes();
+    const within = (h1,h2) => m >= h1*60 && m < h2*60;
+    if(within(7,9))   return "breakfast";
+    if(within(11,13)) return "lunch";
+    if(within(17,19)) return "dinner";
+    if(m >= 21*60 || m < 5*60) return "bedtime";   // 21:00–05:00 wraps midnight
+    return "snack";
+  }
 
   const SVG = {
     check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="check"><path d="M20 6 9 17l-5-5"/></svg>',
@@ -919,7 +931,7 @@ const UI = (() => {
     if(m){
       $("mealIcon").innerHTML = `<img src="${m.icon}" alt="${m.label}">`;
       $("mealLabel").textContent = m.label;
-      $("mealSub").textContent = "Order selected · tap to change";
+      $("mealSub").textContent = mealAuto ? "Defaulted by time of day · tap to change" : "Order selected · tap to change";
     } else {
       $("mealIcon").innerHTML = `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
       $("mealLabel").textContent = "Select order";
@@ -938,6 +950,7 @@ const UI = (() => {
   function selectMeal(key){
     const changed = key !== mealKey;
     mealKey = key;
+    mealAuto = false;
     renderMeal();
     closeMealSheet();
     if(changed){ resetConfirmations(); renderParams(); }  // new order → re-confirm details
@@ -1234,6 +1247,7 @@ const UI = (() => {
 
   /* ---------------- wire up ---------------- */
   function init(){
+    mealKey = mealForTime(new Date()); mealAuto = true;
     renderMeal();
     renderParams();
     renderDeployNotes();
