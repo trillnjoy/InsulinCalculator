@@ -226,9 +226,28 @@ body{
 .dose.is-safe .dose-head{color:var(--safe)}
 .dose.is-stop{border-color:var(--stop);background:var(--stop-wash)}
 .dose.is-stop .dose-head{color:var(--stop);border-bottom-color:rgba(191,54,54,.25)}
+.dose.is-caution{border-color:var(--advisory);background:var(--advisory-wash)}
+.dose.is-caution .dose-head{color:var(--advisory);border-bottom-color:rgba(181,106,6,.25)}
+.dose.is-caution .rescue-title{color:var(--advisory)}
+.dose.is-caution .rescue-body{color:#7a4a06}
+.dose.is-caution .rescue-body strong{color:var(--advisory)}
 .rescue-title{font-size:18px;font-weight:700;color:var(--stop);margin-bottom:6px;display:flex;align-items:center;gap:8px}
 .rescue-body{font-size:13.5px;color:#7a2b2b;line-height:1.5}
 .rescue-body strong{color:var(--stop)}
+
+/* reconcile-and-proceed acknowledgment */
+.ack-row{display:flex;align-items:center;gap:10px;margin-top:14px;cursor:pointer;font-size:13px;font-weight:650;color:var(--ink);-webkit-tap-highlight-color:transparent}
+.ack-row input{position:absolute;opacity:0;width:1px;height:1px}
+.ack-box{width:22px;height:22px;flex:none;border:1.5px solid var(--advisory);border-radius:6px;background:#fff;display:grid;place-items:center;transition:background .15s}
+.ack-box svg{width:14px;height:14px;color:#fff;opacity:0;transition:opacity .12s}
+.ack-row input:checked + .ack-box{background:var(--advisory);border-color:var(--advisory)}
+.ack-row input:checked + .ack-box svg{opacity:1}
+.ack-row input:focus-visible + .ack-box{box-shadow:0 0 0 3px var(--advisory-wash)}
+
+/* persistent prescriber-verified flag on the dose */
+.dose-flag{display:flex;align-items:flex-start;gap:8px;margin-top:13px;padding:9px 11px;border-radius:9px;
+  background:var(--stop-wash);border:1px solid #e8b8b8;color:var(--stop);font-size:12px;font-weight:600;line-height:1.38}
+.dose-flag svg{width:16px;height:16px;flex:none;margin-top:1px}
 
 /* ---------- Advisory chips ---------- */
 .advisories{margin-top:12px;display:flex;flex-direction:column;gap:8px}
@@ -624,6 +643,7 @@ const Engine = (() => {
       prandial:0, correction:0, correctionWithheld:0, correctionHeld:false,
       totalUnrounded:0, totalRounded:null,
       carbCapApplied:false, bgCapApplied:false, correctionFloored:false,
+      targetOffTier:false, targetBand:null, targetDir:null,
       advisories:[], rescue:null,
       params:{ ic:params.ic, cf:params.cf, target:params.target, increment:params.increment }
     };
@@ -644,14 +664,15 @@ const Engine = (() => {
       }
     }
 
-    // --- Calculator-layer age check: target BG must fall within the age-tiered band ---
-    // (order entry traps only the harmonized 70–200; the finer limit is enforced here)
+    // --- Calculator-layer age check: target BG vs the age-tiered band ---
+    // Within the hard order stop (70–200) but outside the age tier is a *challenge*,
+    // not a block: pharmacy & RN challenge; if the prescriber verifies intent, the
+    // dose must still be calculable. So we flag it and let computation proceed.
     const tband = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
     if(tband && (params.target < tband.min || params.target > tband.max)){
-      res.state = "TARGET_OOR"; res.doseSuppressed = true;
+      res.targetOffTier = true;
       res.targetBand = tband;
       res.targetDir = params.target < tband.min ? "below" : "above";
-      return res;
     }
 
     // need both inputs to produce a dose
@@ -805,6 +826,7 @@ const UI = (() => {
   ];
   let mealKey = null;          // selected meal/order (visual cue only)
   let mealAuto = false;        // true when defaulted (by product or time) vs. manually picked
+  let targetAck = false;       // RN acknowledged a prescriber-verified off-tier target
 
   // Default the order by time of day. Windows per Clinical Standard Work; gaps = snack.
   function mealForTime(date){
@@ -888,7 +910,7 @@ const UI = (() => {
       if(b && (params.target < b.min || params.target > b.max)){
         const dir = params.target < b.min ? "Below" : "Above";
         return { state:"error", aria:"Error — verify",
-                 msg:`${dir} the ${b.label} limit (${b.min}–${b.max} mg/dL) — verify target with the order.` };
+                 msg:`${dir} the ${b.label} limit (${b.min}–${b.max} mg/dL) — verify prescriber intent to proceed.` };
       }
     }
     return { state:"ok", aria:"Within range" };
@@ -934,9 +956,10 @@ const UI = (() => {
     const r = Engine.computeDose(p, inputs);
     const C = CDS_CONFIG.concentrations[params.conc];
     const u = C.unit==='Units' ? 'units' : 'Syr Unit';
+    const holding = r.targetOffTier && !targetAck;   // reconcile prompt up — hold the math
 
     // sub-calcs under each field
-    $("carbSub").innerHTML = (r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
+    $("carbSub").innerHTML = (!holding && r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
       ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${u}</b>`
       : "";
     $("bgSub").innerHTML = (r.bgEntered != null && r.state === "DOSE")
@@ -970,12 +993,19 @@ const UI = (() => {
         <div class="rescue-body">${r.rescue.body}</div>`;
       return;
     }
-    if(r.state === "TARGET_OOR"){
-      panel.classList.add("is-stop");
+    if(r.targetOffTier && !targetAck){
+      // Reconcile-and-proceed: challenge the off-tier target, but allow the RN to
+      // proceed once the prescriber has verified intent. Not a hard block.
+      panel.classList.add("is-caution");
       head.textContent = "Verify target BG";
       body.innerHTML = `
         <div class="rescue-title">${SVG.x}<span>Target outside age limit</span></div>
-        <div class="rescue-body">Target BG <strong>${fmt(params.target)}</strong> is ${r.targetDir} the ${r.targetBand.label} limit (${r.targetBand.min}–${r.targetBand.max} mg/dL). Reconcile the order before a dose is calculated.</div>`;
+        <div class="rescue-body">Target BG <strong>${fmt(params.target)}</strong> is ${r.targetDir} the ${r.targetBand.label} limit (${r.targetBand.min}–${r.targetBand.max} mg/dL). Pharmacy and RN should challenge the order. If the prescriber verifies intent, acknowledge to calculate the dose.</div>
+        <label class="ack-row" for="targetAck">
+          <input type="checkbox" id="targetAck" />
+          <span class="ack-box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+          <span>Prescriber verified intent — calculate dose</span>
+        </label>`;
       return;
     }
     if(r.state === "INCOMPLETE"){
@@ -1007,7 +1037,9 @@ const UI = (() => {
         · increment ${fmt(params.increment)} ${incUnit}
       </div>
       ${r.correctionHeld ? `
-      <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 3&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}`;
+      <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 3&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}
+      ${r.targetOffTier ? `
+      <div class="dose-flag">${SVG.x}<div>Target BG ${fmt(params.target)} is ${r.targetDir} the ${r.targetBand.label} limit (${r.targetBand.min}–${r.targetBand.max}) — prescriber-verified.</div></div>` : ``}`;
   }
 
   // Cap notices appear inline beneath each field on blur (see capHint), and the
@@ -1169,6 +1201,7 @@ const UI = (() => {
                increment:inc, webhook:$("setWebhook").value.trim() };
     StandaloneParameterSource.save(params);
     Hooks.emit("parametersSaved", params);
+    targetAck = false;   // a changed order requires fresh prescriber verification
     // Switching to dilute (or back to U-100) re-defaults the order cue.
     if(concChanged){ mealKey = defaultMeal(conc, new Date()); mealAuto = true; renderMeal(); }
     renderParams();
@@ -1189,7 +1222,7 @@ const UI = (() => {
       <code>Hooks.on('doseCalculated', …)</code> to a SMART scope write.
       <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.
       <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.
-      <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags only the order-vs-calculator gaps that need RN verification — correction factor in the advisory zone (yellow yield) and a target BG outside the age-tiered limit (red X, dose blocked).`;
+      <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags only the order-vs-calculator gaps that need RN verification — correction factor in the advisory zone (yellow yield, proceeds) and a target BG outside the age-tiered limit (red X → pharmacy/RN challenge, reconcile-and-proceed once the prescriber verifies intent).`;
   }
 
   /* ---------------- Parameter grid (native share) ----------------
@@ -1236,6 +1269,11 @@ const UI = (() => {
     $("mealGrid").addEventListener("click", e => {
       const b = e.target.closest(".meal-opt"); if(!b) return;
       selectMeal(b.dataset.meal);
+    });
+
+    // reconcile-and-proceed: acknowledge a prescriber-verified off-tier target
+    $("dosePanel").addEventListener("change", e => {
+      if(e.target && e.target.id === "targetAck"){ targetAck = e.target.checked; recompute(); }
     });
 
     $("inCarbs").addEventListener("input", recompute);
