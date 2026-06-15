@@ -137,22 +137,15 @@ body{
 .meal-sub{font-size:11.5px;color:var(--ink-faint);margin-top:2px}
 .meal-chev{width:20px;height:20px;flex:none;color:var(--ink-faint)}
 
-/* ---------- Confirm checks (touch to confirm order detail) ---------- */
-.confirm{
-  appearance:none;border:none;background:transparent;padding:6px;margin:-6px;cursor:pointer;flex:none;
-  border-radius:8px;line-height:0;-webkit-tap-highlight-color:transparent;transition:background .12s;
-}
-.confirm:hover{background:var(--paper)}
-.confirm svg{width:20px;height:20px;display:block;transition:color .15s}
-.confirm[aria-pressed="false"] svg{color:var(--line-strong)}
-.confirm[aria-pressed="true"]  svg{color:var(--safe)}
-.confirm:focus-visible{outline:2px solid var(--teal);outline-offset:1px}
-
-/* ---------- Locked entry card ---------- */
-#entryCard.locked{opacity:.55;filter:grayscale(.25)}
-#entryCard.locked .field input,
-#entryCard.locked .iob-row{pointer-events:none}
-#entryCard.locked .iob-row{cursor:default}
+/* ---------- Parameter validation badges (auto: check / yield / X) ---------- */
+.badge{width:22px;height:22px;flex:none;display:grid;place-items:center;line-height:0}
+.badge svg{width:22px;height:22px;display:block}
+.badge-ok svg{width:20px;height:20px;color:var(--safe)}
+.param-msg{font-size:11.5px;font-weight:600;margin-top:4px;line-height:1.35}
+.param-msg.caution{color:var(--advisory)}
+.param-msg.error{color:var(--stop)}
+.param.flag-caution{background:var(--advisory-wash)}
+.param.flag-error{background:var(--stop-wash)}
 
 /* ---------- Meal picker grid ---------- */
 .meal-help{font-size:12.5px;color:var(--ink-soft);line-height:1.45;margin:0 0 16px}
@@ -482,19 +475,6 @@ select.set-input{font-family:var(--sans);font-weight:500}
         <div class="note" id="roundNote"></div>
       </div>
 
-      <div class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
-        <label class="iob-row" for="setConfirm" style="padding:0;border:none;gap:11px">
-          <input type="checkbox" id="setConfirm" />
-          <span class="iob-box" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-          </span>
-          <span class="iob-text">
-            <span class="iob-name">Require order-detail confirmation</span>
-            <span class="iob-hint">RN must touch each inherited order detail before entry unlocks. Mirrors the Clinical Standard Work workflow; optional in this freestanding context.</span>
-          </span>
-        </label>
-      </div>
-
       <details class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
         <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Advanced — result webhook (optional)</summary>
         <div style="margin-top:12px">
@@ -562,6 +542,7 @@ const CDS_CONFIG = {
       ic:{ min:2,   max:100 },
       cf:{ min:8,   max:300, advisoryAbove:150 },
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
+      targetOrder:{ min:70, max:200 },   // order-entry trap: harmonized across all ages
       targetBands:{
         lt5:  { label:"< 5 years",  min:130, max:200, def:{ ic:40, cf:100, target:150, increment:0.5 } },
         a5_11:{ label:"5–11 years", min:70,  max:180, def:{ ic:15, cf:50,  target:150, increment:0.5 } },
@@ -576,6 +557,7 @@ const CDS_CONFIG = {
       ic:{ min:1.5, max:40 },
       cf:{ min:10,  max:200, advisoryAbove:null },
       carb:{ entryMin:0, entryMax:99, formulaCap:99 },
+      targetOrder:{ min:120, max:300 },   // single infant band — same at order entry and calculator
       targetBands:{
         infant:{ label:"≤ 12 months", min:120, max:300, def:{ ic:20, cf:25, target:150, increment:1 } }
       },
@@ -611,8 +593,7 @@ const Engine = (() => {
     if(field === "ic"){ range = C.ic; name = "Insulin:carb ratio"; }
     else if(field === "cf"){ range = C.cf; name = "Correction factor"; }
     else if(field === "target"){
-      const band = C.targetBands[ageBandKey] || Object.values(C.targetBands)[0];
-      range = band; name = "Target BG";
+      range = C.targetOrder; name = "Target BG";   // order-entry: harmonized 70–200 (U-100)
     }
     let value = num, corrected = false, advisory = null, message = null;
     if(num < range.min){ value = range.min; corrected = true;
@@ -661,6 +642,16 @@ const Engine = (() => {
           body:"All dose components suppressed. Treat hypoglycemia per protocol (juice / D10 / glucagon). Recheck BG; a new entry is required for any subsequent dose." };
         return res;
       }
+    }
+
+    // --- Calculator-layer age check: target BG must fall within the age-tiered band ---
+    // (order entry traps only the harmonized 70–200; the finer limit is enforced here)
+    const tband = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
+    if(tband && (params.target < tband.min || params.target > tband.max)){
+      res.state = "TARGET_OOR"; res.doseSuppressed = true;
+      res.targetBand = tband;
+      res.targetDir = params.target < tband.min ? "below" : "above";
+      return res;
     }
 
     // need both inputs to produce a dose
@@ -729,7 +720,7 @@ const StandaloneParameterSource = (() => {
   const KEY = "insulinCalc.params.v1";
   const defaults = {
     conc:"U100", ageBand:"a5_11",
-    ic:15, cf:50, target:150, increment:0.5, webhook:"", requireConfirm:true
+    ic:15, cf:50, target:150, increment:0.5, webhook:""
   };
   function load(){
     try{ const s = JSON.parse(localStorage.getItem(KEY)); return s ? {...defaults, ...s} : {...defaults}; }
@@ -812,7 +803,6 @@ const UI = (() => {
     { key:"bedtime",   label:"Bedtime",   icon:"Bedtime_216.png" },
     { key:"formula",   label:"Formula",   icon:"Formula_216.png" }
   ];
-  let confirmed = new Set();   // which order-detail rows the RN has touch-confirmed
   let mealKey = null;          // selected meal/order (visual cue only)
   let mealAuto = false;        // true when defaulted (by product or time) vs. manually picked
 
@@ -834,6 +824,8 @@ const UI = (() => {
 
   const SVG = {
     check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="check"><path d="M20 6 9 17l-5-5"/></svg>',
+    yield:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--advisory)" d="M13.73 4.06 22.2 18.5a2 2 0 0 1-1.73 3H3.53a2 2 0 0 1-1.73-3L10.27 4.06a2 2 0 0 1 3.46 0z"/><path stroke="#fff" stroke-width="2.2" stroke-linecap="round" d="M12 9.5v4.2"/><circle cx="12" cy="17.4" r="1.15" fill="#fff"/></svg>',
+    x:'<svg viewBox="0 0 24 24" fill="none" stroke="var(--stop)" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     warn:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
     info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
     stop:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>'
@@ -859,52 +851,47 @@ const UI = (() => {
       rows.push({ key:"rounding", name:"Rounding", desc:``,
         num:`${fmt(params.increment)}`, uom:`${C.unit==='Units'?'Unit':'Syr Unit'}` });
     }
-    const gate = params.requireConfirm;
     $("paramCard").innerHTML = rows.map(r => {
-      const on = !gate || confirmed.has(r.key);
-      const checkEl = gate
-        ? `<button class="confirm" data-key="${r.key}" aria-pressed="${confirmed.has(r.key)}" aria-label="Confirm ${r.name}">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-           </button>`
-        : SVG.check;
+      const st = paramState(r.key);
+      const badge = st.state === "caution" ? SVG.yield
+                  : st.state === "error"   ? SVG.x
+                  :                          SVG.check;
       return `
-      <div class="param">
-        <div class="meta"><div class="name">${r.name}</div>${r.desc?`<div class="desc">${r.desc}</div>`:``}</div>
-        ${checkEl}
+      <div class="param${st.state==='ok'?'':' flag-'+st.state}">
+        <div class="meta">
+          <div class="name">${r.name}</div>
+          ${r.desc?`<div class="desc">${r.desc}</div>`:``}
+          ${st.msg?`<div class="param-msg ${st.state}">${st.msg}</div>`:``}
+        </div>
+        <span class="badge badge-${st.state}" role="img" aria-label="${st.aria}">${badge}</span>
         <div class="val"><span class="num">${r.num}</span><span class="uom">${r.uom}</span></div>
       </div>`;
     }).join("");
 
     $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
-    updateLock();
+    recompute();
   }
 
-  /* ---- touch-confirm gating (Clinical Standard Work workflow) ---- */
-  function requiredKeys(){
+  /* ---- automatic order-vs-calculator gap detection (replaces touch-confirm) ----
+     Only two gaps prompt RN verification:
+       · Correction factor in the advisory zone (U-100, 151–300)  → yellow yield (proceeds)
+       · Target BG outside the age-tiered limit                   → red X (dose blocked)
+     All other parameters read as a green check. */
+  function paramState(key){
     const C = CDS_CONFIG.concentrations[params.conc];
-    return C.rounding.fixed ? ["ic","cf","target"] : ["ic","cf","target","rounding"];
-  }
-  function allConfirmed(){
-    if(!params.requireConfirm) return true;
-    return requiredKeys().every(k => confirmed.has(k));
-  }
-  function toggleConfirm(key){
-    if(confirmed.has(key)) confirmed.delete(key); else confirmed.add(key);
-    const btn = $("paramCard").querySelector(`.confirm[data-key="${key}"]`);
-    if(btn) btn.setAttribute("aria-pressed", confirmed.has(key) ? "true" : "false");
-    updateLock();
-  }
-  function resetConfirmations(){
-    confirmed = new Set();
-    // a changed order means starting over — clear entered values too
-    $("inCarbs").value=""; $("inBg").value=""; $("inIOB").checked=false;
-    setHint("carbHint",""); setHint("bgHint","");
-  }
-  function updateLock(){
-    const locked = !allConfirmed();
-    $("entryCard").classList.toggle("locked", locked);
-    $("inCarbs").disabled = locked; $("inBg").disabled = locked; $("inIOB").disabled = locked;
-    recompute();   // keep the dose panel synced with lock/entry state
+    if(key === "cf" && C.cf.advisoryAbove != null && params.cf > C.cf.advisoryAbove){
+      return { state:"caution", aria:"Caution — verify",
+               msg:`Above ${C.cf.advisoryAbove} mg/dL — verify correction factor against the order.` };
+    }
+    if(key === "target"){
+      const b = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
+      if(b && (params.target < b.min || params.target > b.max)){
+        const dir = params.target < b.min ? "Below" : "Above";
+        return { state:"error", aria:"Error — verify",
+                 msg:`${dir} the ${b.label} limit (${b.min}–${b.max} mg/dL) — verify target with the order.` };
+      }
+    }
+    return { state:"ok", aria:"Within range" };
   }
 
   /* ---- meal / order picker ---- */
@@ -932,27 +919,24 @@ const UI = (() => {
   function openMealSheet(){ buildMealGrid(); $("mealScrim").classList.add("open"); }
   function closeMealSheet(){ $("mealScrim").classList.remove("open"); }
   function selectMeal(key){
-    const changed = key !== mealKey;
     mealKey = key;
     mealAuto = false;
     renderMeal();
     closeMealSheet();
-    if(changed){ resetConfirmations(); renderParams(); }  // new order → re-confirm details
   }
 
   /* ---- live recompute + render dose ---- */
   function recompute(){
-    const locked = params.requireConfirm && !allConfirmed();
-    const inputs = locked
-      ? { carbs:"", bg:"", insulinOnBoard:false }   // entry gated until order details confirmed
-      : { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(), insulinOnBoard:$("inIOB").checked };
-    const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target, increment:params.increment };
+    const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
+                     insulinOnBoard:$("inIOB").checked };
+    const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target,
+                increment:params.increment, ageBand:params.ageBand };
     const r = Engine.computeDose(p, inputs);
     const C = CDS_CONFIG.concentrations[params.conc];
     const u = C.unit==='Units' ? 'units' : 'Syr Unit';
 
     // sub-calcs under each field
-    $("carbSub").innerHTML = (r.carbsEntered != null && r.state !== "CRITICAL_HYPO" && r.state !== "HYPO")
+    $("carbSub").innerHTML = (r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
       ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${u}</b>`
       : "";
     $("bgSub").innerHTML = (r.bgEntered != null && r.state === "DOSE")
@@ -984,6 +968,14 @@ const UI = (() => {
       body.innerHTML = `
         <div class="rescue-title">${SVG.stop}<span>${r.rescue.title}</span></div>
         <div class="rescue-body">${r.rescue.body}</div>`;
+      return;
+    }
+    if(r.state === "TARGET_OOR"){
+      panel.classList.add("is-stop");
+      head.textContent = "Verify target BG";
+      body.innerHTML = `
+        <div class="rescue-title">${SVG.x}<span>Target outside age limit</span></div>
+        <div class="rescue-body">Target BG <strong>${fmt(params.target)}</strong> is ${r.targetDir} the ${r.targetBand.label} limit (${r.targetBand.min}–${r.targetBand.max} mg/dL). Reconcile the order before a dose is calculated.</div>`;
       return;
     }
     if(r.state === "INCOMPLETE"){
@@ -1048,7 +1040,6 @@ const UI = (() => {
     $("setTarget").value = params.target;
     $("setWebhook").value = params.webhook || "";
     $("setAge").value = params.ageBand;
-    $("setConfirm").checked = !!params.requireConfirm;
     renderRoundSeg();
     refreshSetNotes();
     clearSetMsgs();
@@ -1175,13 +1166,11 @@ const UI = (() => {
 
     const concChanged = conc !== params.conc;
     params = { conc, ageBand, ic:vIc.value, cf:vCf.value, target:vTg.value,
-               increment:inc, webhook:$("setWebhook").value.trim(),
-               requireConfirm:$("setConfirm").checked };
+               increment:inc, webhook:$("setWebhook").value.trim() };
     StandaloneParameterSource.save(params);
     Hooks.emit("parametersSaved", params);
     // Switching to dilute (or back to U-100) re-defaults the order cue.
     if(concChanged){ mealKey = defaultMeal(conc, new Date()); mealAuto = true; renderMeal(); }
-    resetConfirmations();   // changed order details must be re-confirmed
     renderParams();
     // Keep sheet open if a correction/advisory is still shown so the nurse can verify; else close.
     const anyMsg = ["icMsg","cfMsg","targetMsg"].some(id => $(id).classList.contains("show"));
@@ -1200,7 +1189,7 @@ const UI = (() => {
       <code>Hooks.on('doseCalculated', …)</code> to a SMART scope write.
       <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.
       <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.
-      <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the touch-confirm gate (each detail tapped before entry unlocks) carries over from the Clinical Standard Work workflow.`;
+      <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags only the order-vs-calculator gaps that need RN verification — correction factor in the advisory zone (yellow yield) and a target BG outside the age-tiered limit (red X, dose blocked).`;
   }
 
   /* ---------------- Parameter grid (native share) ----------------
@@ -1239,12 +1228,6 @@ const UI = (() => {
     renderParams();
     renderDeployNotes();
     recompute();
-
-    // touch-confirm of order details (event delegation)
-    $("paramCard").addEventListener("click", e => {
-      const b = e.target.closest(".confirm"); if(!b) return;
-      toggleConfirm(b.dataset.key);
-    });
 
     // meal / order picker
     $("mealTile").addEventListener("click", openMealSheet);
