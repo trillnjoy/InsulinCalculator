@@ -410,7 +410,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
           <div class="hint" id="bgHint"></div>
         </div>
         <div class="field">
-          <input id="inBg" type="number" inputmode="decimal" min="0" max="1000" step="1" placeholder="0" aria-label="Current blood glucose in mg per dL">
+          <input id="inBg" type="number" inputmode="decimal" min="1" max="2000" step="1" placeholder="" aria-label="Current blood glucose in mg per dL">
           <span class="unit">mg/dL</span>
         </div>
       </div>
@@ -571,7 +571,7 @@ const CDS_CONFIG = {
       key:"U100", label:"U-100 Standard",
       product:"insulin lispro (Humalog) U-100",
       unit:"Units", unitShort:"units",
-      ic:{ min:1,   max:100, softLowByAge:{ lt5:10, a5_11:4, gte12:2 } },
+      ic:{ min:1,   max:100, advisoryAtMax:100, softLowByAge:{ lt5:10, a5_11:4, gte12:2 } },
       cf:{ min:4,   max:300, advisoryAbove:150, softLowByAge:{ lt5:50, a5_11:15, gte12:8 } },
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
       targetOrder:{ min:70, max:200 },   // order-entry trap: harmonized across all ages
@@ -596,7 +596,7 @@ const CDS_CONFIG = {
       rounding:{ options:[1], def:1, fixed:true }
     }
   },
-  bg:{ entryMin:0, entryMax:1000, criticalHypo:0, hypoThreshold:70, formulaCap:600 }
+  bg:{ entryMin:1, entryMax:2000, criticalHypo:0, hypoThreshold:70, formulaCap:600 }
 };
 
 /* ============================ 2. Engine ================================= */
@@ -635,6 +635,10 @@ const Engine = (() => {
     // soft advisory: U-100 CF > 150
     if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove){
       advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
+    }
+    // soft advisory: U-100 I:C at/above the maximum (100) — flags sliding-scale-style orders
+    if(field === "ic" && range.advisoryAtMax != null && value >= range.advisoryAtMax){
+      advisory = `Insulin:carb ratio at ${range.advisoryAtMax} (the maximum) — verify an actual prandial plan; a ratio this high makes carb coverage negligible (sliding-scale–style order).`;
     }
     // soft advisory: U-100 age-specific LOW rule — fires at order sign, non-blocking.
     if(advisory == null && range.softLowByAge && ageBandKey &&
@@ -1325,14 +1329,15 @@ const UI = (() => {
 
   // Compose a short, problem-signalling message from a validation result.
   function fieldMsg(field, v){
+    if(v.advisory){
+      const corr = v.corrected ? ` (entry ${fmt(v.entered)} corrected to ${v.value})` : "";
+      return { kind:"advisory", text: v.advisory + corr };
+    }
     if(v.corrected){
       const below = v.entered < v.range.min;
       return { kind:"error", text: below
         ? `Raised to minimum ${v.range.min} (was ${fmt(v.entered)}).`
         : `Lowered to maximum ${v.range.max} (was ${fmt(v.entered)}).` };
-    }
-    if(v.advisory){
-      return { kind:"advisory", text: v.advisory };
     }
     return null;
   }
@@ -1408,7 +1413,7 @@ const UI = (() => {
      synchronously — sharing files requires the user gesture, and an await mid-
      handler can void it on Safari. Desktop browsers without file-share fall back
      to opening the PDF in a new tab (no modal trap there). */
-  const PDF_URL = "Insulin_Calc_Parameters.pdf";
+  const PDF_URL = "Insulin_Calc_Parameter_Ranges.pdf";
   let pdfFile = null;
   async function preloadParameterGrid(){
     try{
@@ -1421,7 +1426,7 @@ const UI = (() => {
   }
   function openParameterGrid(){
     if(pdfFile && navigator.canShare && navigator.canShare({ files:[pdfFile] })){
-      navigator.share({ files:[pdfFile], title:"Insulin Calculator — Parameter Grid" })
+      navigator.share({ files:[pdfFile], title:"Insulin Calculator — Parameter Grid (Ranges)" })
         .catch(err => { if(!err || err.name !== "AbortError") fallbackOpenPdf(); });
       return;
     }
@@ -1454,7 +1459,7 @@ const UI = (() => {
     $("inCarbs").addEventListener("input", recompute);
     $("inCarbs").addEventListener("blur", () => capHint("carbs"));
     $("inBg").addEventListener("input", function(){
-      // hard entry ceiling: reject > 1000
+      // hard entry ceiling: reject > entryMax (2000)
       if(this.value !== "" && parseFloat(this.value) > CDS_CONFIG.bg.entryMax){
         this.value = CDS_CONFIG.bg.entryMax;
       }
