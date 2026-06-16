@@ -302,6 +302,10 @@ body{
   border:1.5px solid var(--line-strong);border-radius:10px;background:#fcfdfd;color:var(--ink);outline:none;
 }
 .set-input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-wash)}
+.set-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.set-row > .set-input{flex:0 0 92px;width:92px;text-align:center;padding-left:6px;padding-right:6px}
+.gauge{flex:1 1 240px;min-width:250px;touch-action:none;cursor:pointer;user-select:none;-webkit-user-select:none}
+.gauge svg{display:block;overflow:visible}
 select.set-input{font-family:var(--sans);font-weight:500}
 .seg{display:flex;gap:8px}
 .seg button{
@@ -469,21 +473,30 @@ select.set-input{font-family:var(--sans);font-weight:500}
 
       <div class="set-group">
         <label for="setIc">Insulin : carb ratio</label>
-        <input id="setIc" class="set-input" type="number" inputmode="decimal" step="0.5" placeholder="e.g. 15">
+        <div class="set-row">
+          <input id="setIc" class="set-input" type="number" inputmode="decimal" step="0.5" placeholder="e.g. 15">
+          <div class="gauge" id="icGauge"></div>
+        </div>
         <div class="note" id="icNote"></div>
         <div class="setmsg" id="icMsg"></div>
       </div>
 
       <div class="set-group">
         <label for="setCf">Correction factor (ISF)</label>
-        <input id="setCf" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 30">
+        <div class="set-row">
+          <input id="setCf" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 30">
+          <div class="gauge" id="cfGauge"></div>
+        </div>
         <div class="note" id="cfNote"></div>
         <div class="setmsg" id="cfMsg"></div>
       </div>
 
       <div class="set-group">
         <label for="setTarget">Target blood glucose</label>
-        <input id="setTarget" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 120">
+        <div class="set-row">
+          <input id="setTarget" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 120">
+          <div class="gauge" id="targetGauge"></div>
+        </div>
         <div class="note" id="targetNote"></div>
         <div class="setmsg" id="targetMsg"></div>
       </div>
@@ -1078,10 +1091,13 @@ const UI = (() => {
     $("setTarget").value = params.target;
     $("setWebhook").value = params.webhook || "";
     $("setAge").value = params.ageBand;
+    $("scrim").classList.add("open");
     renderRoundSeg();
     refreshSetNotes();
     clearSetMsgs();
-    $("scrim").classList.add("open");
+    wireAllGauges();
+    observeGauges();
+    renderAllGauges();
   }
   function closeSheet(){ $("scrim").classList.remove("open"); }
 
@@ -1122,6 +1138,151 @@ const UI = (() => {
       : "Set by prescriber at order entry. Always rounds up.";
   }
 
+  /* ===== Order-parameter gauges — visual hard/soft limits + detente circles ===== */
+  const GPAL = { tealDeep:"#0A525A", teal:"#0E6E78", inkSoft:"#5A6B74", line:"#DDE5E9",
+    greenWash:"#E3F1E6", green:"#2E7D32", amberWash:"#FBEEDA", amber:"#B45309",
+    neutral:"#EFF3F4", red:"#C0392B", white:"#FFFFFF" };
+  function gEsc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  // Detente data from the 3-yr order viz. Values are a starting point — verify before clinical sign-off.
+  const DIST = {
+    U100:{
+      ic:{ axis:[0,100], band:{
+        lt5:{common:[25,60],median:40,modes:[15,30]},
+        a5_11:{common:[9,28],median:16,modes:[40,50]},
+        gte12:{common:[5,23],median:11,modes:[40,50]} } },
+      cf:{ axis:[0,300], band:{
+        lt5:{common:[128,195],median:165,modes:[198,150]},
+        a5_11:{common:[36,124],median:66,modes:[100,40]},
+        gte12:{common:[20,71],median:34,modes:[20,100]} } },
+      target:{ axis:[70,200], band:{
+        lt5:{median:175,modes:[150,200]},
+        a5_11:{median:130,modes:[150,200]},
+        gte12:{median:138,modes:[130,150]} } }
+    },
+    U10:{
+      ic:{ axis:[0,40],  band:{ infant:{median:20} } },
+      cf:{ axis:[0,200], band:{ infant:{median:25} } },
+      target:{ axis:[70,300], band:{ infant:{median:150} } }
+    }
+  };
+  const G_IDS  = { ic:["setIc","icMsg","icGauge"], cf:["setCf","cfMsg","cfGauge"], target:["setTarget","targetMsg","targetGauge"] };
+  const G_STEP = { ic:0.5, cf:1, target:1 };
+
+  function buildGauge(c, W){
+    const pad=16, H=130, trackY=64, trackH=30, cy=trackY+trackH/2;
+    const x0=pad, x1=W-pad, span=c.axisMax-c.axisMin;
+    const X=v=>x0+(Math.max(c.axisMin,Math.min(c.axisMax,v))-c.axisMin)/span*(x1-x0);
+    const zf={amber:GPAL.amberWash,green:GPAL.greenWash,neutral:GPAL.neutral};
+    let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet" font-family="Arial,Helvetica,sans-serif" role="img" aria-label="${gEsc(c.aria||'')}">`;
+    s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" rx="8" fill="${GPAL.neutral}"/>`;
+    (c.zones||[]).forEach(z=>{const zx=X(z.from),zw=X(z.to)-X(z.from); if(zw>0.5) s+=`<rect x="${zx.toFixed(1)}" y="${trackY}" width="${zw.toFixed(1)}" height="${trackH}" fill="${zf[z.kind]||GPAL.neutral}"/>`;});
+    s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" rx="8" fill="none" stroke="${GPAL.line}" stroke-width="1.5"/>`;
+    [c.hardMin,c.hardMax].forEach(h=>{ if(h==null)return; const hx=X(h); s+=`<rect x="${(hx-1.5).toFixed(1)}" y="${trackY-5}" width="3" height="${trackH+10}" fill="${GPAL.red}"/>`;});
+    (c.ticks||[]).forEach(t=>{const tx=X(t.at); s+=`<line x1="${tx.toFixed(1)}" y1="${trackY-4}" x2="${tx.toFixed(1)}" y2="${trackY+trackH+4}" stroke="${t.color||GPAL.amber}" stroke-width="1.5" stroke-dasharray="4,3"/>`;
+      s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+20}" text-anchor="middle" font-size="14" fill="${t.color||GPAL.amber}">${gEsc(t.label)}</text>`;});
+    const near=(a,b)=>Math.abs(a-b)<=span*0.04, dets=c.detents||[];
+    const hmin=c.hardMin??c.axisMin, hmax=c.hardMax??c.axisMax;
+    if(!dets.some(d=>near(d.at,hmin))) s+=`<text x="${X(hmin).toFixed(1)}" y="${trackY-12}" text-anchor="start" font-size="14" fill="${GPAL.red}">${gEsc(hmin)}</text>`;
+    if(!dets.some(d=>near(d.at,hmax))) s+=`<text x="${X(hmax).toFixed(1)}" y="${trackY-12}" text-anchor="end" font-size="14" fill="${GPAL.red}">${gEsc(hmax)}</text>`;
+    dets.forEach(d=>{const dx=X(d.at);
+      if(d.kind==="median"){ s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="14" fill="${GPAL.white}" stroke="${GPAL.tealDeep}" stroke-width="4"/>`;
+        s+=`<text x="${dx.toFixed(1)}" y="${cy+5}" text-anchor="middle" font-size="14" font-weight="700" fill="${GPAL.tealDeep}">M</text>`;}
+      else { s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="${d.r||10}" fill="${GPAL.teal}" opacity="0.9"/>`; }
+      s+=`<text x="${dx.toFixed(1)}" y="${trackY-12}" text-anchor="middle" font-size="14" fill="${GPAL.inkSoft}">${gEsc(d.at)}</text>`;
+      s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="28" fill="transparent" data-v="${d.at}"/>`;});
+    if(c.value!=null&&!isNaN(c.value)){const vx=X(c.value);
+      s+=`<line x1="${vx.toFixed(1)}" y1="${trackY-16}" x2="${vx.toFixed(1)}" y2="${trackY+trackH+16}" stroke="${GPAL.tealDeep}" stroke-width="3"/>`;
+      s+=`<circle cx="${vx.toFixed(1)}" cy="${trackY+trackH+16}" r="12" fill="${GPAL.white}" stroke="${GPAL.tealDeep}" stroke-width="3"/>`;
+      const pw=52,ph=26,py=trackY-42, px=Math.max(x0,Math.min(x1-pw,vx-pw/2));
+      s+=`<rect x="${px.toFixed(1)}" y="${py}" width="${pw}" height="${ph}" rx="7" fill="${GPAL.tealDeep}"/>`;
+      s+=`<text x="${(px+pw/2).toFixed(1)}" y="${py+18}" text-anchor="middle" font-size="18" font-weight="700" fill="${GPAL.white}">${gEsc(c.value)}</text>`;}
+    return s+`</svg>`;
+  }
+
+  function gaugeCfg(field){
+    const conc=$("setConc").value, band=$("setAge").value;
+    const C=CDS_CONFIG.concentrations[conc];
+    const d=(DIST[conc]||{})[field]||{}, bd=(d.band||{})[band]||{};
+    const raw=parseFloat($(G_IDS[field][0]).value);
+    const cfg={ value:isNaN(raw)?null:raw, zones:[], ticks:[], detents:[], aria:field+" range gauge" };
+    if(field==="target"){
+      const order=C.targetOrder, ab=C.targetBands[band]||Object.values(C.targetBands)[0];
+      cfg.axisMin=(d.axis&&d.axis[0])??order.min; cfg.axisMax=(d.axis&&d.axis[1])??order.max;
+      cfg.hardMin=order.min; cfg.hardMax=order.max;
+      cfg.zones.push({from:ab.min,to:ab.max,kind:"green"});
+      if(order.min<ab.min){ cfg.zones.push({from:order.min,to:ab.min,kind:"amber"}); cfg.ticks.push({at:ab.min,label:"band",color:GPAL.green}); }
+      if(order.max>ab.max){ cfg.zones.push({from:ab.max,to:order.max,kind:"amber"}); cfg.ticks.push({at:ab.max,label:"band",color:GPAL.green}); }
+    } else {
+      const r=C[field];
+      cfg.axisMin=(d.axis&&d.axis[0])??0; cfg.axisMax=(d.axis&&d.axis[1])??r.max;
+      cfg.hardMin=r.min; cfg.hardMax=r.max;
+      const softLow=r.softLowByAge&&r.softLowByAge[band];
+      if(softLow!=null){ cfg.zones.push({from:r.min,to:softLow,kind:"amber"}); cfg.ticks.push({at:softLow,label:"low "+softLow,color:GPAL.amber}); }
+      if(bd.common) cfg.zones.push({from:bd.common[0],to:bd.common[1],kind:"green"});
+      if(field==="cf"&&r.advisoryAbove!=null) cfg.ticks.push({at:r.advisoryAbove,label:"warn "+r.advisoryAbove,color:GPAL.amber});
+    }
+    (bd.modes||[]).forEach((m,i)=>cfg.detents.push({at:m,kind:"mode",r:i===0?5.5:4.5}));
+    if(bd.median!=null) cfg.detents.push({at:bd.median,kind:"median"});
+    return cfg;
+  }
+
+  function renderGaugeAt(div, W){
+    const field = div._field; if(!field) return;
+    const cfg = gaugeCfg(field); cfg._W = W; div._cfg = cfg; div.innerHTML = buildGauge(cfg, W);
+  }
+  function renderGauge(field){
+    const div=$(G_IDS[field][2]); if(!div) return; div._field=field;
+    const W=Math.max(240, Math.round(div.getBoundingClientRect().width || div.clientWidth || 340));
+    renderGaugeAt(div, W);
+  }
+  function renderAllGauges(){ ["ic","cf","target"].forEach(renderGauge); }
+
+  let _gaugeRO=null;
+  function observeGauges(){
+    if(_gaugeRO || typeof ResizeObserver==="undefined") return;
+    _gaugeRO = new ResizeObserver(entries=>{
+      entries.forEach(e=>{
+        const div=e.target, w=Math.max(240, Math.round(e.contentRect.width));
+        if(w>40 && w!==div._lastW){ div._lastW=w; renderGaugeAt(div, w); }
+      });
+    });
+    ["ic","cf","target"].forEach(f=>{ const d=$(G_IDS[f][2]); if(d){ d._field=f; _gaugeRO.observe(d); } });
+  }
+
+  function wireGauge(field){
+    const div=$(G_IDS[field][2]); if(!div||div._wired) return; div._wired=true;
+    const inputId=G_IDS[field][0], msgId=G_IDS[field][1], step=G_STEP[field];
+    const SNAP_PX=3;   // gentle, escapable magnet (was a fraction of the whole axis span)
+    const valFromX=cx=>{ const cfg=div._cfg, r=div.getBoundingClientRect(), pad=16, W=cfg._W||r.width;
+      let px=((cx-r.left)/r.width)*W;
+      let fr=(px-pad)/(W-2*pad); fr=Math.max(0,Math.min(1,fr));
+      return cfg.axisMin+fr*(cfg.axisMax-cfg.axisMin); };
+    const setVal=(v,exact)=>{ const cfg=div._cfg; v=Math.round(v/step)*step;
+      if(!exact){ // light pixel-distance magnet — catches near a detente but pulls off easily
+        const usable=Math.max(1,(cfg._W||300)-32), valWin=SNAP_PX*(cfg.axisMax-cfg.axisMin)/usable;
+        let best=null,bDist=Infinity;
+        (cfg.detents||[]).forEach(d=>{const dd=Math.abs(d.at-v); if(dd<bDist){bDist=dd;best=d.at;}});
+        if(best!=null&&bDist<=valWin) v=best;
+      }
+      v=Math.max(cfg.hardMin,Math.min(cfg.hardMax,v));
+      $(inputId).value=Math.round(v*100)/100;
+      validateField(field,inputId,msgId,true);   // snaps to bounds, shows msg, re-renders gauge
+    };
+    let dragging=false;
+    div.addEventListener("pointerdown",e=>{
+      dragging=true; try{div.setPointerCapture(e.pointerId);}catch(_){}
+      const hit=e.target.closest("[data-v]");
+      if(hit) setVal(parseFloat(hit.getAttribute("data-v")), true);  // tapping a dot = exact pick
+      else setVal(valFromX(e.clientX), false);
+      e.preventDefault();
+    });
+    div.addEventListener("pointermove",e=>{ if(dragging) setVal(valFromX(e.clientX), false); });
+    const stop=()=>{ dragging=false; };
+    div.addEventListener("pointerup",stop); div.addEventListener("pointercancel",stop);
+  }
+  function wireAllGauges(){ ["ic","cf","target"].forEach(wireGauge); }
+
   function refreshSetNotes(){
     const conc = $("setConc").value;
     const C = CDS_CONFIG.concentrations[conc];
@@ -1137,6 +1298,7 @@ const UI = (() => {
     const band = C.targetBands[$("setAge").value] || Object.values(C.targetBands)[0];
     $("targetNote").textContent = `Allowed ${band.min}–${band.max} mg/dL for ${band.label}.`;
     $("ageNote").textContent = "U-100 target BG range tightens with age.";
+    renderAllGauges();
   }
 
   // Populate I:C / CF / Target / Rounding with the data-derived defaults for the
@@ -1179,10 +1341,11 @@ const UI = (() => {
   function validateField(field, inputId, msgId, correct){
     const ageBand = $("setAge").value || Object.keys(CDS_CONFIG.concentrations[$("setConc").value].targetBands)[0];
     const v = Engine.validateParameter(field, $(inputId).value, $("setConc").value, ageBand);
-    if(v.empty){ clearOne(msgId); return v; }
+    if(v.empty){ clearOne(msgId); renderGauge(field); return v; }
     if(correct && v.corrected) $(inputId).value = v.value;
     const m = fieldMsg(field, v);
     if(m) showSetMsg(msgId, m.kind, m.text); else clearOne(msgId);
+    renderGauge(field);
     return v;
   }
 
@@ -1319,6 +1482,10 @@ const UI = (() => {
     $("setIc").addEventListener("blur", () => validateField("ic","setIc","icMsg",true));
     $("setCf").addEventListener("blur", () => validateField("cf","setCf","cfMsg",true));
     $("setTarget").addEventListener("blur", () => validateField("target","setTarget","targetMsg",true));
+    $("setIc").addEventListener("input", () => renderGauge("ic"));
+    $("setCf").addEventListener("input", () => renderGauge("cf"));
+    $("setTarget").addEventListener("input", () => renderGauge("target"));
+    window.addEventListener("resize", () => { if($("scrim").classList.contains("open")) renderAllGauges(); });
     $("setRound").addEventListener("click", e => {
       const b = e.target.closest("button[data-inc]"); if(!b || b.disabled) return;
       $("setRound").dataset.val = b.dataset.inc;
