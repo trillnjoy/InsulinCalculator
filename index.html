@@ -917,23 +917,41 @@ const UI = (() => {
     recompute();
   }
 
-  /* ---- automatic order-vs-calculator gap detection (replaces touch-confirm) ----
-     Only two gaps prompt RN verification:
-       · Correction factor in the advisory zone (U-100, 151–300)  → yellow yield (proceeds)
-       · Target BG outside the age-tiered limit                   → red X (dose blocked)
-     All other parameters read as a green check. */
+  /* ---- order-entry display badges (auto) ----
+     Caution (yellow yield) is driven entirely by the parameter grid, so a grid
+     update changes the thresholds with no code edit:
+       · I:C   < softLowByAge[band]   OR  >= advisoryAtMax
+       · CF    < softLowByAge[band]   OR  >  advisoryAbove
+       · Target outside targetBands[band] (below min or above max)
+     The off-tier target also drives the engine's reconcile-and-proceed dose hold
+     (independent of this badge). Everything else reads as a green check. */
   function paramState(key){
     const C = CDS_CONFIG.concentrations[params.conc];
-    if(key === "cf" && C.cf.advisoryAbove != null && params.cf > C.cf.advisoryAbove){
-      return { state:"caution", aria:"Caution — verify",
-               msg:`Above ${C.cf.advisoryAbove} mg/dL — verify correction factor against the order.` };
+    const band = params.ageBand;
+    if(key === "ic"){
+      const r = C.ic, sl = r.softLowByAge && r.softLowByAge[band];
+      if(sl != null && params.ic < sl)
+        return { state:"caution", aria:"Caution — verify",
+                 msg:`Below the ${sl} age soft-floor — verify (more insulin than usual for age).` };
+      if(r.advisoryAtMax != null && params.ic >= r.advisoryAtMax)
+        return { state:"caution", aria:"Caution — verify",
+                 msg:`At/above ${r.advisoryAtMax} — verify an actual prandial plan (sliding-scale-style order).` };
+    }
+    if(key === "cf"){
+      const r = C.cf, sl = r.softLowByAge && r.softLowByAge[band];
+      if(sl != null && params.cf < sl)
+        return { state:"caution", aria:"Caution — verify",
+                 msg:`Below the ${sl} age soft-floor — verify (more insulin than usual for age).` };
+      if(r.advisoryAbove != null && params.cf > r.advisoryAbove)
+        return { state:"caution", aria:"Caution — verify",
+                 msg:`Above ${r.advisoryAbove} mg/dL — verify correction factor against the order.` };
     }
     if(key === "target"){
-      const b = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
+      const b = C.targetBands[band] || Object.values(C.targetBands)[0];
       if(b && (params.target < b.min || params.target > b.max)){
         const dir = params.target < b.min ? "Below" : "Above";
-        return { state:"error", aria:"Error — verify",
-                 msg:`${dir} the ${b.label} limit (${b.min}–${b.max} mg/dL) — verify prescriber intent to proceed.` };
+        return { state:"caution", aria:"Caution — verify",
+                 msg:`${dir} the ${b.label} range (${b.min}–${b.max} mg/dL) — verify prescriber intent.` };
       }
     }
     return { state:"ok", aria:"Within range" };
@@ -1402,7 +1420,7 @@ const UI = (() => {
       <code>Hooks.on('doseCalculated', …)</code> to a SMART scope write.
       <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.
       <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.
-      <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags only the order-vs-calculator gaps that need RN verification — correction factor in the advisory zone (yellow yield, proceeds) and a target BG outside the age-tiered limit (red X → pharmacy/RN challenge, reconcile-and-proceed once the prescriber verifies intent).`;
+      <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags order-vs-calculator gaps that need RN verification with a caution sign (yellow yield) — an aggressive or high I:C, a low or &gt;150 correction factor, or a target BG outside the age-tiered band. A target outside the band additionally holds the dose for reconcile-and-proceed once the prescriber verifies intent.`;
   }
 
   /* ---------------- Parameter grid (native share) ----------------
@@ -1456,13 +1474,21 @@ const UI = (() => {
       if(e.target && e.target.id === "targetAck"){ targetAck = e.target.checked; recompute(); }
     });
 
-    $("inCarbs").addEventListener("input", recompute);
+    $("inCarbs").addEventListener("input", function(){
+      const max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;   // clamp like BG
+      if(this.value !== "" && parseFloat(this.value) > max) this.value = max;
+      capHint("carbs");
+      recompute();
+    });
     $("inCarbs").addEventListener("blur", () => capHint("carbs"));
     $("inBg").addEventListener("input", function(){
-      // hard entry ceiling: reject > entryMax (2000)
-      if(this.value !== "" && parseFloat(this.value) > CDS_CONFIG.bg.entryMax){
-        this.value = CDS_CONFIG.bg.entryMax;
+      const BG = CDS_CONFIG.bg;
+      if(this.value !== ""){
+        const v = parseFloat(this.value);
+        if(v > BG.entryMax) this.value = BG.entryMax;          // ceiling clamp
+        else if(v < BG.entryMin) this.value = BG.entryMin;     // floor clamp — prevents 0
       }
+      capHint("bg");          // >formulaCap amber notice live, not only on blur
       recompute();
     });
     $("inBg").addEventListener("blur", () => capHint("bg"));
