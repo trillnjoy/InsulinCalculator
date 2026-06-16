@@ -558,8 +558,8 @@ const CDS_CONFIG = {
       key:"U100", label:"U-100 Standard",
       product:"insulin lispro (Humalog) U-100",
       unit:"Units", unitShort:"units",
-      ic:{ min:2,   max:100 },
-      cf:{ min:8,   max:300, advisoryAbove:150 },
+      ic:{ min:1,   max:100, softLowByAge:{ lt5:10, a5_11:4, gte12:2 } },
+      cf:{ min:4,   max:300, advisoryAbove:150, softLowByAge:{ lt5:50, a5_11:15, gte12:8 } },
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
       targetOrder:{ min:70, max:200 },   // order-entry trap: harmonized across all ages
       targetBands:{
@@ -622,6 +622,12 @@ const Engine = (() => {
     // soft advisory: U-100 CF > 150
     if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove){
       advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
+    }
+    // soft advisory: U-100 age-specific LOW rule — fires at order sign, non-blocking.
+    if(advisory == null && range.softLowByAge && ageBandKey &&
+       range.softLowByAge[ageBandKey] != null && value < range.softLowByAge[ageBandKey]){
+      const thr = range.softLowByAge[ageBandKey];
+      advisory = `${name} ${round2(value)} is below the age-typical floor of ${thr} for this age band — verify (more insulin than usual for age). Acknowledge to proceed.`;
     }
     return { ok:true, value, corrected, advisory, message, range, entered:num };
   }
@@ -1119,9 +1125,15 @@ const UI = (() => {
   function refreshSetNotes(){
     const conc = $("setConc").value;
     const C = CDS_CONFIG.concentrations[conc];
-    $("icNote").textContent = `Allowed ${C.ic.min}–${C.ic.max} g per ${C.unit==='Units'?'unit':'syringe unit'}.`;
+    const ab = $("setAge").value;
+    const icLow = C.ic.softLowByAge && C.ic.softLowByAge[ab];
+    const cfLow = C.cf.softLowByAge && C.cf.softLowByAge[ab];
+    $("icNote").textContent = `Allowed ${C.ic.min}–${C.ic.max} g per ${C.unit==='Units'?'unit':'syringe unit'}.`
+      + (icLow ? ` · soft advisory below ${icLow} for this age.` : "");
     $("cfNote").textContent = `Allowed ${C.cf.min}–${C.cf.max} mg/dL per ${C.unit==='Units'?'unit':'syringe unit'}`
-      + (C.cf.advisoryAbove ? ` · soft advisory above ${C.cf.advisoryAbove}.` : ".");
+      + (C.cf.advisoryAbove ? ` · soft advisory above ${C.cf.advisoryAbove}` : "")
+      + (cfLow ? ` or below ${cfLow} (age)` : "")
+      + ".";
     const band = C.targetBands[$("setAge").value] || Object.values(C.targetBands)[0];
     $("targetNote").textContent = `Allowed ${band.min}–${band.max} mg/dL for ${band.label}.`;
     $("ageNote").textContent = "U-100 target BG range tightens with age.";
@@ -1158,7 +1170,7 @@ const UI = (() => {
         : `Lowered to maximum ${v.range.max} (was ${fmt(v.entered)}).` };
     }
     if(v.advisory){
-      return { kind:"advisory", text:`Above ${v.range.advisoryAbove} mg/dL/unit — verify (possible data-entry error).` };
+      return { kind:"advisory", text: v.advisory };
     }
     return null;
   }
