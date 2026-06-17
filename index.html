@@ -386,7 +386,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
       </span>
       <span class="iob-text">
-        <span class="iob-name">Rapid-acting insulin within past 3 h</span>
+        <span class="iob-name">Rapid-acting insulin within past 2 h</span>
         <span class="iob-hint">Holds the correction to prevent stacking.</span>
       </span>
     </label>
@@ -560,8 +560,9 @@ select.set-input{font-family:var(--sans);font-weight:500}
  *    6. UI              — the only layer that touches the DOM.
  *
  *  Authoritative spec = Insulin_CDS_Algorithm + ProcessFlow.
- *  NOTE: rounding is CEILING (round up) per resolved item D6 — this differs
- *        from the legacy PNG mockup, which rounded down.
+ *  NOTE: rounding is to the NEAREST increment, ties resolving DOWN (toward the
+ *        lower dose) to prevent over-delivery in the smallest patients. This
+ *        supersedes the earlier ceiling/round-up rule (item D6).
  * ==========================================================================*/
 
 /* =========================== 1. CDS_CONFIG ============================== */
@@ -605,11 +606,15 @@ const Engine = (() => {
 
   const round2 = n => Math.round(n*100)/100;
 
-  // Ceiling to an increment, with tiny tolerance so exact multiples don't bump up.
-  function ceilTo(value, inc){
+  // Round to the NEAREST increment. Ties resolve DOWN (toward the lower dose) to
+  // avoid over-delivering insulin — a deliberate hypoglycemia-prevention choice for
+  // the smallest patients. (Supersedes the earlier ceiling/round-up rule, item D6.)
+  // e.g. 2.24 -> 2 at either increment; 2.34 -> 2 at inc 1, -> 2.5 at inc 0.5.
+  function roundTo(value, inc){
     if(!(inc>0)) return value;
-    const f = 1/inc;
-    return Math.round(Math.ceil(value*f - 1e-9))/f;
+    const f = Math.round(1/inc);                 // 0.5 -> 2 ; 1 -> 1
+    const n = Math.ceil(value*f - 0.5 - 1e-9);   // nearest, half-down
+    return n/f;
   }
 
   /* Validate a single order parameter against OEF ranges.
@@ -655,7 +660,7 @@ const Engine = (() => {
     const BG = CDS_CONFIG.bg;
     const carbs = (inputs.carbs === "" || inputs.carbs == null) ? null : parseFloat(inputs.carbs);
     const bg    = (inputs.bg    === "" || inputs.bg    == null) ? null : parseFloat(inputs.bg);
-    const iob   = !!inputs.insulinOnBoard;   // rapid-acting insulin given within the past 3 h
+    const iob   = !!inputs.insulinOnBoard;   // rapid-acting insulin given within the past 2 h
 
     const res = {
       conc:params.conc, unit:C.unit, product:C.product,
@@ -729,7 +734,7 @@ const Engine = (() => {
     }
 
     // --- Insulin-on-board hold (anti-stacking) ---
-    // If rapid-acting insulin was given within the past 3 h, hold the correction
+    // If rapid-acting insulin was given within the past 2 h, hold the correction
     // component to avoid stacking. Prandial (carb) coverage is still given.
     // Source: nurse checkbox (standalone) or MAR query (SMART) — either way it
     // arrives as inputs.insulinOnBoard; the nurse remains the final arbiter.
@@ -740,9 +745,9 @@ const Engine = (() => {
     }
     res.correction = correction;
 
-    // --- Sum + ceiling rounding ---
+    // --- Sum + round to nearest increment ---
     res.totalUnrounded = round2(res.prandial + res.correction);
-    res.totalRounded   = ceilTo(res.totalUnrounded, params.increment);
+    res.totalRounded   = roundTo(res.totalUnrounded, params.increment);
     res.state = "DOSE";
 
     // informational notes
@@ -755,7 +760,7 @@ const Engine = (() => {
     return res;
   }
 
-  return { validateParameter, computeDose, ceilTo, round2 };
+  return { validateParameter, computeDose, roundTo, round2 };
 })();
 
 /* ======================= 3. ParameterSource ============================ */
@@ -785,7 +790,7 @@ const StandaloneParameterSource = (() => {
    but the nurse confirms point-of-care BG before dosing.
 
    INSULIN ON BOARD (anti-stacking): query the MAR for a rapid-acting insulin
-   MedicationAdministration in the past 3 h (status=completed, by RxNorm /
+   MedicationAdministration in the past 2 h (status=completed, by RxNorm /
    medication code). If found, pre-check the calculator's insulinOnBoard flag so
    the correction component is held. The nurse can still toggle it: they may know
    a dose was given that the MAR hasn't captured yet, or that a charted dose
@@ -797,8 +802,8 @@ const FhirParameterSource = {
     throw new Error("FhirParameterSource.load() not implemented — supply a SMART fhirClient and map MedicationRequest fields to the params shape above.");
   },
   // Returns true if rapid-acting insulin was administered within the lookback window.
-  async insulinOnBoard(/* fhirClient, lookbackHours = 3 */){
-    throw new Error("insulinOnBoard() not implemented — query MedicationAdministration (rapid-acting, status=completed) within the past 3 h.");
+  async insulinOnBoard(/* fhirClient, lookbackHours = 2 */){
+    throw new Error("insulinOnBoard() not implemented — query MedicationAdministration (rapid-acting, status=completed) within the past 2 h.");
   }
 };
 
@@ -1074,11 +1079,11 @@ const UI = (() => {
       </div>
       <div class="dose-formula">
         ${components} = ${fmt(r.totalUnrounded)}
-        ${bump ? ` → rounds up to <b style="color:var(--teal-deep)">${fmt(r.totalRounded)}</b>` : ` (exact)`}
+        ${bump ? ` → rounds to <b style="color:var(--teal-deep)">${fmt(r.totalRounded)}</b>` : ` (exact)`}
         · increment ${fmt(params.increment)} ${incUnit}
       </div>
       ${r.correctionHeld ? `
-      <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 3&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}
+      <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 2&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}
       ${r.targetOffTier ? `
       <div class="dose-flag">${SVG.x}<div>Target BG ${fmt(params.target)} is ${r.targetDir} the ${r.targetBand.label} limit (${r.targetBand.min}–${r.targetBand.max}) — prescriber-verified.</div></div>` : ``}`;
   }
@@ -1156,8 +1161,8 @@ const UI = (() => {
     [...host.children].forEach(b => b.setAttribute("aria-pressed",
       Math.abs(parseFloat(b.dataset.inc) - parseFloat(host.dataset.val)) < 1e-9));
     $("roundNote").textContent = C.rounding.fixed
-      ? "U-10 Dilute always rounds up to the nearest whole syringe unit (fixed)."
-      : "Set by prescriber at order entry. Always rounds up.";
+      ? "U-10 Dilute rounds to the nearest whole syringe unit (fixed); ties round down."
+      : "Set by prescriber at order entry. Rounds to the nearest increment; ties round down.";
   }
 
   /* ===== Order-parameter gauges — visual hard/soft limits + detente circles ===== */
@@ -1419,7 +1424,7 @@ const UI = (() => {
       <br>· Point <code>Hooks.dispatchWebhook</code> at your CDS Hooks / documentation endpoint, or wire
       <code>Hooks.on('doseCalculated', …)</code> to a SMART scope write.
       <br>· Configure <code>SmartLaunch.config</code> (clientId, scopes, redirect) and add fhirclient for OAuth2 launch.
-      <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 3&nbsp;h) to pre-check the hold; the nurse can still override it.
+      <br>· Feed <code>insulinOnBoard</code> from a MAR query (rapid-acting <code>MedicationAdministration</code>, past 2&nbsp;h) to pre-check the hold; the nurse can still override it.
       <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags order-vs-calculator gaps that need RN verification with a caution sign (yellow yield) — an aggressive or high I:C, a low or &gt;150 correction factor, or a target BG outside the age-tiered band. A target outside the band additionally holds the dose for reconcile-and-proceed once the prescriber verifies intent.`;
   }
 
