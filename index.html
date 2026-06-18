@@ -250,6 +250,15 @@ body{
 
 /* ---------- Advisory chips ---------- */
 .advisories{margin-top:12px;display:flex;flex-direction:column;gap:8px}
+.calc-btn{
+  display:block;margin:16px auto 2px;padding:14px 30px;min-width:220px;
+  font-family:var(--sans);font-size:16px;font-weight:700;letter-spacing:.01em;text-align:center;
+  color:#fff;background:var(--teal-deep);border:none;border-radius:12px;box-shadow:var(--shadow);
+  cursor:pointer;transition:opacity .15s;
+}
+.calc-btn:active{opacity:.85}
+.calc-btn:disabled{background:var(--line-strong);color:var(--ink-faint);cursor:not-allowed;box-shadow:none}
+.calc-hint{text-align:center;font-size:12px;color:var(--ink-faint);margin:0 0 4px}
 .advisory{
   display:flex;gap:10px;font-size:12.5px;line-height:1.45;
   padding:10px 12px;border-radius:10px;border:1px solid;
@@ -417,6 +426,10 @@ select.set-input{font-family:var(--sans);font-weight:500}
     </div>
   </div>
 
+  <!-- INTENTIONAL CALCULATE GATE -->
+  <button class="calc-btn" id="calcBtn" type="button" disabled>Calculate Dose</button>
+  <div class="calc-hint" id="calcHint">Enter carbohydrates and current BG, then calculate.</div>
+
   <!-- DOSE READOUT -->
   <div class="dose" id="dosePanel">
     <div class="dose-head" id="doseHead">Calculated dose</div>
@@ -429,11 +442,6 @@ select.set-input{font-family:var(--sans);font-weight:500}
     <span class="dot"></span>
     <span><b>Standalone mode.</b> Parameters are set in Settings (the gear), not drawn from an EHR order.</span>
   </div>
-
-  <details class="adv-section">
-    <summary>Deployment notes — FHIR SMART &amp; webhooks</summary>
-    <div class="kv" id="deployNotes"></div>
-  </details>
 
   <div class="disclaimer">
     <b>Internal working tool — not for clinical use</b> without pharmacy and informatics committee review.
@@ -505,6 +513,11 @@ select.set-input{font-family:var(--sans);font-weight:500}
         <div class="seg" id="setRound"></div>
         <div class="note" id="roundNote"></div>
       </div>
+
+      <details class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
+        <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Deployment notes — FHIR SMART &amp; webhooks</summary>
+        <div class="kv" id="deployNotes" style="margin-top:12px"></div>
+      </details>
 
       <details class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
         <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Advanced — result webhook (optional)</summary>
@@ -925,7 +938,7 @@ const UI = (() => {
     }).join("");
 
     $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
-    recompute();
+    invalidateDose();   // a parameter change requires a fresh, intentional calculation
   }
 
   /* ---- order-entry display badges (auto) ----
@@ -1003,6 +1016,11 @@ const UI = (() => {
   }
 
   /* ---- live recompute + render dose ---- */
+  let doseShown = false;
+  function bothEntered(){
+    return $("inCarbs").value.trim() !== "" && $("inBg").value.trim() !== "";
+  }
+  // Renders the current state. Respects the doseShown gate; does NOT change it.
   function recompute(){
     const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
                      insulinOnBoard:$("inIOB").checked };
@@ -1013,7 +1031,7 @@ const UI = (() => {
     const u = C.unit==='Units' ? 'units' : 'Syr Unit';
     const holding = r.targetOffTier && !targetAck;   // reconcile prompt up — hold the math
 
-    // sub-calcs under each field
+    // sub-calcs under each field (live preview as values are typed)
     $("carbSub").innerHTML = (!holding && r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
       ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${u}</b>`
       : "";
@@ -1025,10 +1043,35 @@ const UI = (() => {
             : `Correction = (${fmt(r.bgUsedForCorrection)} − ${fmt(params.target)}) ÷ ${fmt(params.cf)} = <b>${fmt(r.correction)} ${u}</b>`)
       : "";
 
-    renderDose(r, C);
+    // Total dose + alerts are gated behind an intentional Calculate, and only once
+    // both Current BG and carbs are entered.
+    const ready = bothEntered();
+    $("calcBtn").disabled = !ready;
+    $("calcBtn").style.display = doseShown ? "none" : "";
+    $("calcHint").style.display = (!doseShown && !ready) ? "block" : "none";
+    if(doseShown && ready){
+      $("dosePanel").style.display = "";
+      renderDose(r, C);
+    } else {
+      $("dosePanel").style.display = "none";
+      $("doseBody").innerHTML = "";
+    }
     renderAdvisories();
+  }
 
-    // fire hooks
+  // A changed input or order invalidates a shown dose — force a fresh, intentional calc.
+  function invalidateDose(){ doseShown = false; recompute(); }
+
+  // The Calculate button reveals the total dose + alerts (and fires hooks on a real dose).
+  function calculateDose(){
+    if(!bothEntered()) return;
+    doseShown = true;
+    recompute();
+    const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
+                     insulinOnBoard:$("inIOB").checked };
+    const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target,
+                increment:params.increment, ageBand:params.ageBand };
+    const r = Engine.computeDose(p, inputs);
     if(r.state === "DOSE"){
       Hooks.emit("doseCalculated", r);
       Hooks.dispatchWebhook(params.webhook, { event:"doseCalculated", result:r });
@@ -1493,7 +1536,7 @@ const UI = (() => {
       const max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;   // clamp like BG
       if(this.value !== "" && parseFloat(this.value) > max) this.value = max;
       capHint("carbs");
-      recompute();
+      invalidateDose();
     });
     $("inCarbs").addEventListener("blur", () => capHint("carbs"));
     $("inBg").addEventListener("input", function(){
@@ -1504,15 +1547,16 @@ const UI = (() => {
         else if(v < BG.entryMin) this.value = BG.entryMin;     // floor clamp — prevents 0
       }
       capHint("bg");          // >formulaCap amber notice live, not only on blur
-      recompute();
+      invalidateDose();
     });
     $("inBg").addEventListener("blur", () => capHint("bg"));
-    $("inIOB").addEventListener("change", recompute);
+    $("inIOB").addEventListener("change", invalidateDose);
+    $("calcBtn").addEventListener("click", calculateDose);
 
     $("btnReset").addEventListener("click", () => {
       $("inCarbs").value=""; $("inBg").value=""; $("inIOB").checked=false;
       setHint("carbHint",""); setHint("bgHint","");
-      recompute(); $("inCarbs").focus();
+      invalidateDose(); $("inCarbs").focus();
     });
     $("btnSettings").addEventListener("click", openSheet);
     $("btnInfo").addEventListener("click", openParameterGrid);
