@@ -120,12 +120,11 @@ body{
 
 /* ---------- Order / meal header ---------- */
 .order-header{
-  display:flex;align-items:center;gap:12px;width:100%;text-align:left;cursor:pointer;
+  display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;cursor:default;
   appearance:none;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-  box-shadow:var(--shadow);padding:9px 12px;margin:2px 0 4px;color:inherit;
-  transition:border-color .15s;
+  box-shadow:var(--shadow);padding:8px 6px;margin:2px 0 4px;color:inherit;
 }
-.order-header:hover{border-color:var(--line-strong)}
+.order-header:hover{border-color:var(--line)}
 .meal-icon{
   width:50px;height:50px;flex:none;border-radius:11px;background:var(--paper);
   border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;color:var(--ink-faint);
@@ -133,9 +132,9 @@ body{
 .meal-icon img{width:100%;height:100%;object-fit:contain}
 .meal-icon .meal-ph{width:24px;height:24px}
 .meal-meta{flex:1;min-width:0}
-.meal-label{font-size:16px;font-weight:650;color:var(--ink)}
-.meal-sub{font-size:11.5px;color:var(--ink-faint);margin-top:2px}
-.meal-chev{width:20px;height:20px;flex:none;color:var(--ink-faint)}
+.meal-label{display:block;font-size:16px;font-weight:650;color:var(--ink)}
+.meal-sub{display:block;font-size:11.5px;color:var(--ink-faint);margin-top:3px;line-height:1.45}
+.meal-chev{display:none}
 
 /* ---------- Parameter validation badges (auto: check / yield / X) ---------- */
 .badge{width:22px;height:22px;flex:none;display:grid;place-items:center;line-height:0}
@@ -362,7 +361,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
 <div class="wrap">
 
   <!-- ORDER / MEAL CONTEXT -->
-  <button class="order-header" id="mealTile" type="button" aria-haspopup="dialog" aria-label="Select meal or order context">
+  <button class="order-header" id="mealTile" type="button" tabindex="-1" aria-label="Medication order detail">
     <span class="meal-icon" id="mealIcon" aria-hidden="true">
       <svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
     </span>
@@ -571,6 +570,8 @@ const CDS_CONFIG = {
     U100: {
       key:"U100", label:"U-100 Standard",
       product:"insulin lispro (Humalog) U-100",
+      orderName:"Humalog (insulin lispro 100 Units/mL)",
+      schedule:"Meals and Bedtime",
       unit:"Units", unitShort:"units",
       ic:{ min:1,   max:100, advisoryAtMax:100, softLowByAge:{ lt5:10, a5_11:4, gte12:2 } },
       cf:{ min:4,   max:300, advisoryAbove:150, softLowByAge:{ lt5:50, a5_11:15, gte12:8 } },
@@ -586,6 +587,8 @@ const CDS_CONFIG = {
     U10: {
       key:"U10", label:"U-10 Dilute",
       product:"insulin lispro (Humalog) U-10 dilute",
+      orderName:"**DILUTE** insulin lispro 10 Units/mL",
+      schedule:"Feeds",
       unit:"Syringe Units", unitShort:"syringe units",
       ic:{ min:1.5, max:40 },
       cf:{ min:10,  max:200, advisoryAbove:null },
@@ -886,7 +889,10 @@ const UI = (() => {
   function renderParams(){
     const C = CDS_CONFIG.concentrations[params.conc];
     const band = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
-    $("barSub").textContent = `${C.label} · dosed in ${C.unit}`;
+    const isDilute = C.key === "U10";
+    $("barSub").textContent = isDilute ? "**DILUTE U-10**" : "STANDARD U-100";
+    $("barSub").style.color = isDilute ? "#E2B45A" : "";
+    $("barSub").style.fontWeight = isDilute ? "800" : "";
     const rows = [
       { key:"ic", name:"Insulin : carb ratio", desc:`1 ${C.unitShort.replace(/s$/,'')} covers ${fmt(params.ic)} g carbohydrate`,
         num:`${fmt(params.ic)}`, uom:`g/${C.unit==='Units'?'Unit':'Syr Unit'}` },
@@ -963,19 +969,22 @@ const UI = (() => {
   }
 
   /* ---- meal / order picker ---- */
+  // Builds the medication order sig dynamically from the live order parameters.
+  function orderSig(C){
+    const roundPhrase = C.rounding.fixed ? "1 Syringe Unit" : `${fmt(params.increment)} unit`;
+    return `1 dose subcutaneously ${C.schedule}, Insulin/carb ratio 1:${fmt(params.ic)}, `
+         + `Corr factor: ${fmt(params.cf)}, Target BG: ${fmt(params.target)}, `
+         + `Round to nearest ${roundPhrase}, Calculate dose to correct BG and cover carbs.`;
+  }
   function renderMeal(){
-    const m = MEALS.find(x => x.key === mealKey);
-    if(m){
-      $("mealIcon").innerHTML = `<img src="${m.icon}" alt="${m.label}">`;
-      $("mealLabel").textContent = m.label;
-      $("mealSub").textContent = !mealAuto ? "Order selected · tap to change"
-        : (mealKey === "formula" ? "Default for dilute insulin · tap to change"
-                                 : "Defaulted by time of day · tap to change");
-    } else {
-      $("mealIcon").innerHTML = `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
-      $("mealLabel").textContent = "Select order";
-      $("mealSub").textContent = "Tap to choose meal · snack · bedtime";
-    }
+    const C = CDS_CONFIG.concentrations[params.conc];
+    const m = MEALS.find(x => x.key === mealKey);   // default cue kept (icon only; ignored art)
+    $("mealIcon").innerHTML = m
+      ? `<img src="${m.icon}" alt="">`
+      : `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
+    // card now shows the live medication order, not a meal picker
+    $("mealLabel").textContent = C.orderName;
+    $("mealSub").textContent = orderSig(C);
   }
   function buildMealGrid(){
     $("mealGrid").innerHTML = MEALS.map(m => `
@@ -1406,7 +1415,8 @@ const UI = (() => {
     Hooks.emit("parametersSaved", params);
     targetAck = false;   // a changed order requires fresh prescriber verification
     // Switching to dilute (or back to U-100) re-defaults the order cue.
-    if(concChanged){ mealKey = defaultMeal(conc, new Date()); mealAuto = true; renderMeal(); }
+    if(concChanged){ mealKey = defaultMeal(conc, new Date()); mealAuto = true; }
+    renderMeal();        // order sig depends on ic/cf/target/increment — refresh every save
     renderParams();
     // Keep sheet open if a correction/advisory is still shown so the nurse can verify; else close.
     const anyMsg = ["icMsg","cfMsg","targetMsg"].some(id => $(id).classList.contains("show"));
@@ -1466,7 +1476,7 @@ const UI = (() => {
     recompute();
 
     // meal / order picker
-    $("mealTile").addEventListener("click", openMealSheet);
+    // (order card is display-only — meal picker retired; default cue kept for the icon)
     $("btnCloseMeal").addEventListener("click", closeMealSheet);
     $("mealScrim").addEventListener("click", e => { if(e.target === $("mealScrim")) closeMealSheet(); });
     $("mealGrid").addEventListener("click", e => {
