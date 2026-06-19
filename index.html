@@ -572,9 +572,9 @@ select.set-input{font-family:var(--sans);font-weight:500}
  *    6. UI              — the only layer that touches the DOM.
  *
  *  Authoritative spec = Insulin_CDS_Algorithm + ProcessFlow.
- *  NOTE: rounding is to the NEAREST increment, ties resolving DOWN (toward the
- *        lower dose) to prevent over-delivery in the smallest patients. This
- *        supersedes the earlier ceiling/round-up rule (item D6).
+ *  NOTE: rounding is to the NEAREST increment using standard rounding — ties go
+ *        to the HIGHER increment. A dose that rounds to 0 is shown as 0. This
+ *        supersedes the earlier "ties down" and ceiling/round-up rules (item D6).
  * ==========================================================================*/
 
 /* =========================== 1. CDS_CONFIG ============================== */
@@ -587,7 +587,7 @@ const CDS_CONFIG = {
       schedule:"Meals and Bedtime",
       unit:"Units", unitShort:"units",
       ic:{ min:1,   max:100, advisoryAtMax:100, softLowByAge:{ lt5:10, a5_11:4, gte12:2 } },
-      cf:{ min:4,   max:300, advisoryAbove:150, softLowByAge:{ lt5:50, a5_11:15, gte12:8 } },
+      cf:{ min:4,   max:300, advisoryAbove:150, highWarn:200, softLowByAge:{ lt5:50, a5_11:15 } },
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
       targetOrder:{ min:70, max:200 },   // order-entry trap: harmonized across all ages
       targetBands:{
@@ -622,14 +622,14 @@ const Engine = (() => {
 
   const round2 = n => Math.round(n*100)/100;
 
-  // Round to the NEAREST increment. Ties resolve DOWN (toward the lower dose) to
-  // avoid over-delivering insulin — a deliberate hypoglycemia-prevention choice for
-  // the smallest patients. (Supersedes the earlier ceiling/round-up rule, item D6.)
-  // e.g. 2.24 -> 2 at either increment; 2.34 -> 2 at inc 1, -> 2.5 at inc 0.5.
+  // Round to the NEAREST increment using standard rounding: ties go to the HIGHER
+  // increment (X.25 at inc 0.5, X.5 at inc 1 round up). A computed dose that rounds
+  // to 0 is shown as 0. (Supersedes the earlier "ties down" and ceiling rules.)
+  // e.g. 2.24 -> 2 (either inc); 2.34 -> 2 @inc 1, 2.5 @inc 0.5; ties 2.5 -> 3 @inc 1, 2.25 -> 2.5 @inc 0.5.
   function roundTo(value, inc){
     if(!(inc>0)) return value;
     const f = Math.round(1/inc);                 // 0.5 -> 2 ; 1 -> 1
-    const n = Math.ceil(value*f - 0.5 - 1e-9);   // nearest, half-down
+    const n = Math.floor(value*f + 0.5 + 1e-9);  // nearest, ties half-up
     return n/f;
   }
 
@@ -653,8 +653,11 @@ const Engine = (() => {
       message = `${name} ${round2(num)} is below the allowed minimum. Corrected to ${range.min}.`; }
     else if(num > range.max){ value = range.max; corrected = true;
       message = `${name} ${round2(num)} is above the allowed maximum. Corrected to ${range.max}.`; }
-    // soft advisory: U-100 CF > 150
-    if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove){
+    // soft advisory: U-100 CF high — graduated. >=200 is a dedicated high warn
+    // (all ages); >150 is the lighter verify advisory.
+    if(field === "cf" && range.highWarn != null && value >= range.highWarn){
+      advisory = `Correction factor at or above ${range.highWarn} mg/dL/unit (all ages) — high; a correction factor this large delivers very little insulin per point above target. Verify the sensitivity factor. Acknowledge to proceed.`;
+    } else if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove){
       advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
     }
     // soft advisory: U-100 I:C at/above the maximum (100) — flags sliding-scale-style orders
@@ -719,18 +722,23 @@ const Engine = (() => {
       res.targetDir = params.target < tband.min ? "below" : "above";
     }
 
-    // need both inputs to produce a dose
-    if(carbs == null || bg == null){ res.state = "INCOMPLETE"; return res; }
-
-    // --- Carb cap (prandial) ---
-    let carbsUsed = carbs;
-    if(carbs > C.carb.formulaCap){
-      carbsUsed = C.carb.formulaCap; res.carbCapApplied = true;
-      res.advisories.push({ type:"warn",
-        text:`Carb entry exceeds ${C.carb.formulaCap} g limit. Prandial dose calculated using ${C.carb.formulaCap} g. Entered value retained for verification.` });
+    // --- Carb cap + prandial ---
+    // Computed as soon as carbs is present (even before BG is entered) so the
+    // prandial preview under the field reads correctly. The full dose still
+    // requires both inputs (the INCOMPLETE return just below).
+    if(carbs != null){
+      let carbsUsed = carbs;
+      if(carbs > C.carb.formulaCap){
+        carbsUsed = C.carb.formulaCap; res.carbCapApplied = true;
+        res.advisories.push({ type:"warn",
+          text:`Carb entry exceeds ${C.carb.formulaCap} g limit. Prandial dose calculated using ${C.carb.formulaCap} g. Entered value retained for verification.` });
+      }
+      res.carbsUsed = carbsUsed;
+      res.prandial = round2(carbsUsed / params.ic);
     }
-    res.carbsUsed = carbsUsed;
-    res.prandial = round2(carbsUsed / params.ic);
+
+    // need both inputs to produce a full dose
+    if(carbs == null || bg == null){ res.state = "INCOMPLETE"; return res; }
 
     // --- BG cap (correction only) ---
     let bgForCorr = bg;
@@ -939,6 +947,7 @@ const UI = (() => {
 
     $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
     invalidateDose();   // a parameter change requires a fresh, intentional calculation
+    renderSubcalcs();   // refresh committed previews under the new parameters
   }
 
   /* ---- order-entry display badges (auto) ----
@@ -966,6 +975,9 @@ const UI = (() => {
       if(sl != null && params.cf < sl)
         return { state:"caution", aria:"Caution — verify",
                  msg:`Below the ${sl} age soft-floor — verify (more insulin than usual for age).` };
+      if(r.highWarn != null && params.cf >= r.highWarn)
+        return { state:"caution", aria:"Caution — verify",
+                 msg:`At/above ${r.highWarn} mg/dL (all ages) — high; verify the correction factor.` };
       if(r.advisoryAbove != null && params.cf > r.advisoryAbove)
         return { state:"caution", aria:"Caution — verify",
                  msg:`Above ${r.advisoryAbove} mg/dL — verify correction factor against the order.` };
@@ -1015,23 +1027,26 @@ const UI = (() => {
     closeMealSheet();
   }
 
-  /* ---- live recompute + render dose ---- */
+  /* ---- recompute (gate) + sub-calc previews (commit on blur) ---- */
   let doseShown = false;
   function bothEntered(){
     return $("inCarbs").value.trim() !== "" && $("inBg").value.trim() !== "";
   }
-  // Renders the current state. Respects the doseShown gate; does NOT change it.
-  function recompute(){
+  function computeCurrent(){
     const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
                      insulinOnBoard:$("inIOB").checked };
     const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target,
                 increment:params.increment, ageBand:params.ageBand };
-    const r = Engine.computeDose(p, inputs);
+    return Engine.computeDose(p, inputs);
+  }
+
+  // Sub-calc previews. Rendered on field COMMIT (blur), not per keystroke, so a
+  // value like 142 doesn't flash partial results for 1 then 14 while typing.
+  function renderSubcalcs(){
+    const r = computeCurrent();
     const C = CDS_CONFIG.concentrations[params.conc];
     const u = C.unit==='Units' ? 'units' : 'Syr Unit';
     const holding = r.targetOffTier && !targetAck;   // reconcile prompt up — hold the math
-
-    // sub-calcs under each field (live preview as values are typed)
     $("carbSub").innerHTML = (!holding && r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
       ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${u}</b>`
       : "";
@@ -1042,9 +1057,13 @@ const UI = (() => {
             ? `BG ≤ target → <b>no correction</b>`
             : `Correction = (${fmt(r.bgUsedForCorrection)} − ${fmt(params.target)}) ÷ ${fmt(params.cf)} = <b>${fmt(r.correction)} ${u}</b>`)
       : "";
+  }
 
-    // Total dose + alerts are gated behind an intentional Calculate, and only once
-    // both Current BG and carbs are entered.
+  // Gate only: Calculate button state + the total dose panel. Updates live (so the
+  // button enables and a stale dose hides immediately) but never renders sub-calcs.
+  function recompute(){
+    const r = computeCurrent();
+    const C = CDS_CONFIG.concentrations[params.conc];
     const ready = bothEntered();
     $("calcBtn").disabled = !ready;
     $("calcBtn").style.display = doseShown ? "none" : "";
@@ -1066,12 +1085,9 @@ const UI = (() => {
   function calculateDose(){
     if(!bothEntered()) return;
     doseShown = true;
+    renderSubcalcs();   // ensure previews are committed even if Calculate was tapped without blurring
     recompute();
-    const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
-                     insulinOnBoard:$("inIOB").checked };
-    const p = { conc:params.conc, ic:params.ic, cf:params.cf, target:params.target,
-                increment:params.increment, ageBand:params.ageBand };
-    const r = Engine.computeDose(p, inputs);
+    const r = computeCurrent();
     if(r.state === "DOSE"){
       Hooks.emit("doseCalculated", r);
       Hooks.dispatchWebhook(params.webhook, { event:"doseCalculated", result:r });
@@ -1213,8 +1229,8 @@ const UI = (() => {
     [...host.children].forEach(b => b.setAttribute("aria-pressed",
       Math.abs(parseFloat(b.dataset.inc) - parseFloat(host.dataset.val)) < 1e-9));
     $("roundNote").textContent = C.rounding.fixed
-      ? "U-10 Dilute rounds to the nearest whole syringe unit (fixed); ties round down."
-      : "Set by prescriber at order entry. Rounds to the nearest increment; ties round down.";
+      ? "U-10 Dilute rounds to the nearest whole syringe unit (fixed); ties round up."
+      : "Set by prescriber at order entry. Rounds to the nearest increment; ties round up.";
   }
 
   /* ===== Order-parameter gauges — visual hard/soft limits + detente circles ===== */
@@ -1227,17 +1243,17 @@ const UI = (() => {
   const DIST = {
     U100:{
       ic:{ axis:[0,100], band:{
-        lt5:{common:[25,60],median:40,modes:[15,30]},
-        a5_11:{common:[9,28],median:16,modes:[40,50]},
-        gte12:{common:[5,23],median:11,modes:[40,50]} } },
+        lt5:{common:[25,60],median:40,modes:[15,20,30,35,45,60,80]},
+        a5_11:{common:[9,28],median:15,modes:[8,10,12,20,25,30,40,50]},
+        gte12:{common:[5,23],median:10,modes:[2,4,5,8,12,15]} } },
       cf:{ axis:[0,300], band:{
-        lt5:{common:[128,195],median:165,modes:[198,150]},
-        a5_11:{common:[36,124],median:66,modes:[100,40]},
-        gte12:{common:[20,71],median:34,modes:[20,100]} } },
+        lt5:{common:[128,195],median:200,modes:[60,150,180,300]},
+        a5_11:{common:[36,124],median:100,modes:[30,50,60,75,120,150,200]},
+        gte12:{common:[20,71],median:50,modes:[15,25,30,40,60,100,120]} } },
       target:{ axis:[70,200], band:{
-        lt5:{median:175,modes:[150,200]},
-        a5_11:{median:130,modes:[150,200]},
-        gte12:{median:138,modes:[130,150]} } }
+        lt5:{median:200,modes:[150,180]},
+        a5_11:{median:130,modes:[120,150,180,200]},
+        gte12:{median:130,modes:[120,150]} } }
     },
     U10:{
       ic:{ axis:[0,40],  band:{ infant:{median:20} } },
@@ -1300,6 +1316,7 @@ const UI = (() => {
       if(softLow!=null){ cfg.zones.push({from:r.min,to:softLow,kind:"amber"}); cfg.ticks.push({at:softLow,label:"low "+softLow,color:GPAL.amber}); }
       if(bd.common) cfg.zones.push({from:bd.common[0],to:bd.common[1],kind:"green"});
       if(field==="cf"&&r.advisoryAbove!=null) cfg.ticks.push({at:r.advisoryAbove,label:"warn "+r.advisoryAbove,color:GPAL.amber});
+      if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,label:"high "+r.highWarn,color:GPAL.red});
     }
     (bd.modes||[]).forEach((m,i)=>cfg.detents.push({at:m,kind:"mode",r:i===0?5.5:4.5}));
     if(bd.median!=null) cfg.detents.push({at:bd.median,kind:"median"});
@@ -1371,8 +1388,9 @@ const UI = (() => {
     $("icNote").textContent = `Allowed ${C.ic.min}–${C.ic.max} g per ${C.unit==='Units'?'unit':'syringe unit'}.`
       + (icLow ? ` · soft advisory below ${icLow} for this age.` : "");
     $("cfNote").textContent = `Allowed ${C.cf.min}–${C.cf.max} mg/dL per ${C.unit==='Units'?'unit':'syringe unit'}`
-      + (C.cf.advisoryAbove ? ` · soft advisory above ${C.cf.advisoryAbove}` : "")
-      + (cfLow ? ` or below ${cfLow} (age)` : "")
+      + (C.cf.advisoryAbove ? ` · verify above ${C.cf.advisoryAbove}` : "")
+      + (C.cf.highWarn ? `, high warn at ${C.cf.highWarn}` : "")
+      + (cfLow ? ` · below ${cfLow} (age)` : "")
       + ".";
     const band = C.targetBands[$("setAge").value] || Object.values(C.targetBands)[0];
     $("targetNote").textContent = `Allowed ${band.min}–${band.max} mg/dL for ${band.label}.`;
@@ -1529,16 +1547,17 @@ const UI = (() => {
 
     // reconcile-and-proceed: acknowledge a prescriber-verified off-tier target
     $("dosePanel").addEventListener("change", e => {
-      if(e.target && e.target.id === "targetAck"){ targetAck = e.target.checked; recompute(); }
+      if(e.target && e.target.id === "targetAck"){ targetAck = e.target.checked; renderSubcalcs(); recompute(); }
     });
 
     $("inCarbs").addEventListener("input", function(){
       const max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;   // clamp like BG
       if(this.value !== "" && parseFloat(this.value) > max) this.value = max;
+      $("carbSub").innerHTML = "";   // no partial preview while typing
       capHint("carbs");
       invalidateDose();
     });
-    $("inCarbs").addEventListener("blur", () => capHint("carbs"));
+    $("inCarbs").addEventListener("blur", () => { capHint("carbs"); renderSubcalcs(); });
     $("inBg").addEventListener("input", function(){
       const BG = CDS_CONFIG.bg;
       if(this.value !== ""){
@@ -1546,16 +1565,18 @@ const UI = (() => {
         if(v > BG.entryMax) this.value = BG.entryMax;          // ceiling clamp
         else if(v < BG.entryMin) this.value = BG.entryMin;     // floor clamp — prevents 0
       }
+      $("bgSub").innerHTML = "";   // no partial preview while typing
       capHint("bg");          // >formulaCap amber notice live, not only on blur
       invalidateDose();
     });
-    $("inBg").addEventListener("blur", () => capHint("bg"));
-    $("inIOB").addEventListener("change", invalidateDose);
+    $("inBg").addEventListener("blur", () => { capHint("bg"); renderSubcalcs(); });
+    $("inIOB").addEventListener("change", () => { invalidateDose(); renderSubcalcs(); });
     $("calcBtn").addEventListener("click", calculateDose);
 
     $("btnReset").addEventListener("click", () => {
       $("inCarbs").value=""; $("inBg").value=""; $("inIOB").checked=false;
       setHint("carbHint",""); setHint("bgHint","");
+      $("carbSub").innerHTML=""; $("bgSub").innerHTML="";
       invalidateDose(); $("inCarbs").focus();
     });
     $("btnSettings").addEventListener("click", openSheet);
