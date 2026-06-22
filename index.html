@@ -589,11 +589,11 @@ const CDS_CONFIG = {
       ic:{ min:1,   max:100, advisoryAtMax:100, softLowByAge:{ lt5:10, a5_11:4, gte12:2 } },
       cf:{ min:4,   max:300, advisoryAbove:150, highWarn:200, softLowByAge:{ lt5:50, a5_11:15 } },
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
-      targetOrder:{ min:70, max:200 },   // order-entry trap: harmonized across all ages
+      targetOrder:{ min:120, max:300 },   // order-entry trap: harmonized across all ages
       targetBands:{
-        lt5:  { label:"< 5 years",  min:130, max:200, def:{ ic:40, cf:100, target:150, increment:0.5 } },
-        a5_11:{ label:"5–11 years", min:70,  max:180, def:{ ic:15, cf:50,  target:150, increment:0.5 } },
-        gte12:{ label:"≥ 12 years", min:70,  max:150, def:{ ic:10, cf:25,  target:120, increment:0.5 } }
+        lt5:  { label:"< 5 years",  min:130, max:300, def:{ ic:40, cf:100, target:150, increment:0.5 } },
+        a5_11:{ label:"5–11 years", min:120, max:250, def:{ ic:15, cf:50,  target:150, increment:0.5 } },
+        gte12:{ label:"≥ 12 years", min:120, max:250, def:{ ic:10, cf:25,  target:120, increment:0.5 } }
       },
       rounding:{ options:[0.5,1], def:0.5, fixed:false }
     },
@@ -646,7 +646,7 @@ const Engine = (() => {
     if(field === "ic"){ range = C.ic; name = "Insulin:carb ratio"; }
     else if(field === "cf"){ range = C.cf; name = "Correction factor"; }
     else if(field === "target"){
-      range = C.targetOrder; name = "Target BG";   // order-entry: harmonized 70–200 (U-100)
+      range = C.targetOrder; name = "Target BG";   // order-entry: harmonized 120–300 (U-100)
     }
     let value = num, corrected = false, advisory = null, message = null;
     if(num < range.min){ value = range.min; corrected = true;
@@ -1250,7 +1250,7 @@ const UI = (() => {
         lt5:{common:[128,195],median:200,modes:[60,150,180,300]},
         a5_11:{common:[36,124],median:100,modes:[30,50,60,75,120,150,200]},
         gte12:{common:[20,71],median:50,modes:[15,25,30,40,60,100,120]} } },
-      target:{ axis:[70,200], band:{
+      target:{ axis:[120,300], band:{
         lt5:{median:200,modes:[150,180]},
         a5_11:{median:130,modes:[120,150,180,200]},
         gte12:{median:130,modes:[120,150]} } }
