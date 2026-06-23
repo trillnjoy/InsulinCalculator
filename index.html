@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- Insulin Dose Calculator — build v1.8.6 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -608,7 +609,7 @@ const CDS_CONFIG = {
       carb:{ entryMin:0, entryMax:99, formulaCap:99 },
       targetOrder:{ min:120, max:300 },   // single infant band — same at order entry and calculator
       targetBands:{
-        infant:{ label:"≤ 12 months", min:120, max:300, def:{ ic:20, cf:25, target:150, increment:1 } }
+        infant:{ label:"≤ 12 months", min:130, max:300, def:{ ic:20, cf:25, target:150, increment:1 } }
       },
       rounding:{ options:[1], def:1, fixed:true }
     }
@@ -1258,7 +1259,7 @@ const UI = (() => {
     U10:{
       ic:{ axis:[0,40],  band:{ infant:{median:20} } },
       cf:{ axis:[0,200], band:{ infant:{median:25} } },
-      target:{ axis:[70,300], band:{ infant:{median:150} } }
+      target:{ axis:[120,300], band:{ infant:{median:150} } }
     }
   };
   const G_IDS  = { ic:["setIc","icMsg","icGauge"], cf:["setCf","cfMsg","cfGauge"], target:["setTarget","targetMsg","targetGauge"] };
