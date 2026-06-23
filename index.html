@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.8.8 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.8.13 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -311,9 +311,9 @@ body{
   border:1.5px solid var(--line-strong);border-radius:10px;background:#fcfdfd;color:var(--ink);outline:none;
 }
 .set-input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-wash)}
-.set-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.set-row{display:flex;gap:14px;align-items:center;flex-wrap:nowrap}
 .set-row > .set-input{flex:0 0 60px;width:60px;text-align:center;padding-left:6px;padding-right:6px}
-.gauge{flex:1 1 auto;min-width:0;touch-action:none;cursor:pointer;user-select:none;-webkit-user-select:none}
+.gauge{flex:1 1 0;min-width:0;touch-action:none;cursor:pointer;user-select:none;-webkit-user-select:none}
 .gauge svg{display:block;overflow:visible}
 select.set-input{font-family:var(--sans);font-weight:500}
 .seg{display:flex;gap:8px}
@@ -658,8 +658,8 @@ const Engine = (() => {
     // (all ages); >150 is the lighter verify advisory.
     if(field === "cf" && range.highWarn != null && value >= range.highWarn){
       advisory = `Correction factor at or above ${range.highWarn} mg/dL/unit (all ages) — high; a correction factor this large delivers very little insulin per point above target. Verify the sensitivity factor. Acknowledge to proceed.`;
-    } else if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove){
-      advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
+    } else if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove && ageBandKey === "gte12"){
+      advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit (\u2265 12 y) — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
     }
     // soft advisory: U-100 I:C at/above the maximum (100) — flags sliding-scale-style orders
     if(field === "ic" && range.advisoryAtMax != null && value >= range.advisoryAtMax){
@@ -1265,10 +1265,25 @@ const UI = (() => {
   const G_IDS  = { ic:["setIc","icMsg","icGauge"], cf:["setCf","cfMsg","cfGauge"], target:["setTarget","targetMsg","targetGauge"] };
   const G_STEP = { ic:0.5, cf:1, target:1 };
 
+  // Axis transform: linear, or focus+context (piecewise-linear). When c.focus=[lo,hi] is set,
+  // the band's region-of-interest gets ~60% of the track width and the sparse tails compress,
+  // so a dense cluster decompresses whether it sits low (big kids) or high (little kids).
+  function axT(c){
+    const aMin=c.axisMin, aMax=c.axisMax;
+    if(c.focus && c.focus[1]>c.focus[0]){
+      const fLo=Math.max(aMin,c.focus[0]), fHi=Math.min(aMax,c.focus[1]);
+      const FF=0.66, wL=fLo-aMin, wR=aMax-fHi, wT=wL+wR, fL=wT>0?(1-FF)*wL/wT:0;
+      const vB=[aMin,fLo,fHi,aMax], fB=[0,fL,fL+FF,1];
+      const ip=(x,xs,ys)=>{ for(let i=1;i<xs.length;i++){ if(x<=xs[i]||i===xs.length-1){ const dn=(xs[i]-xs[i-1])||1; return ys[i-1]+(x-xs[i-1])/dn*(ys[i]-ys[i-1]); } } return ys[ys.length-1]; };
+      return { frac:v=>ip(Math.max(aMin,Math.min(aMax,v)),vB,fB), val:f=>ip(Math.max(0,Math.min(1,f)),fB,vB) };
+    }
+    const d=(aMax-aMin)||1;
+    return { frac:v=>{const cl=Math.max(aMin,Math.min(aMax,v)); return (cl-aMin)/d;}, val:f=>aMin+f*d };
+  }
   function buildGauge(c, W){
-    const pad=16, H=142, trackY=64, trackH=30, cy=trackY+trackH/2;
-    const x0=pad, x1=W-pad, span=c.axisMax-c.axisMin;
-    const X=v=>x0+(Math.max(c.axisMin,Math.min(c.axisMax,v))-c.axisMin)/span*(x1-x0);
+    const pad=16, H=152, trackY=78, trackH=30, cy=trackY+trackH/2;
+    const x0=pad, x1=W-pad, _t=axT(c);
+    const X=v=>x0+_t.frac(v)*(x1-x0);
     const zf={amber:GPAL.amberWash,green:GPAL.greenWash,neutral:GPAL.neutral};
     let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet" font-family="Arial,Helvetica,sans-serif" role="img" aria-label="${gEsc(c.aria||'')}">`;
     s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" rx="8" fill="${GPAL.neutral}"/>`;
@@ -1279,20 +1294,27 @@ const UI = (() => {
       if(t.k){ s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+22}" text-anchor="middle" font-size="13" font-weight="700" fill="${tc}">${gEsc(t.k)}</text>`;
         s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+37}" text-anchor="middle" font-size="12.5" fill="${tc}">${gEsc(t.val)}</text>`; }
       else { s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+20}" text-anchor="middle" font-size="14" fill="${tc}">${gEsc(t.label)}</text>`; }});
-    const near=(a,b)=>Math.abs(a-b)<=span*0.04, dets=c.detents||[];
+    const near=(a,b)=>Math.abs(_t.frac(a)-_t.frac(b))<=0.04, dets=c.detents||[];
     const hmin=c.hardMin??c.axisMin, hmax=c.hardMax??c.axisMax;
-    if(!dets.some(d=>near(d.at,hmin))) s+=`<text x="${X(hmin).toFixed(1)}" y="${trackY-12}" text-anchor="start" font-size="14" fill="${GPAL.red}">${gEsc(hmin)}</text>`;
-    if(!dets.some(d=>near(d.at,hmax))) s+=`<text x="${X(hmax).toFixed(1)}" y="${trackY-12}" text-anchor="end" font-size="14" fill="${GPAL.red}">${gEsc(hmax)}</text>`;
+    // top numeric labels collected, then staggered onto 2 rows so dense clusters keep every value legible
+    const lbl=[];
+    if(!dets.some(d=>near(d.at,hmin))) lbl.push({x:X(hmin), t:hmin, fill:GPAL.red, anchor:"start"});
+    dets.forEach(d=>lbl.push({x:X(d.at), t:d.at, fill:GPAL.inkSoft, anchor:"middle"}));
+    if(!dets.some(d=>near(d.at,hmax))) lbl.push({x:X(hmax), t:hmax, fill:GPAL.red, anchor:"end"});
+    lbl.sort((a,b)=>a.x-b.x);
+    const rowY=[trackY-12, trackY-30]; let lastX=[-1e9,-1e9];
+    lbl.forEach(L=>{ const w=String(L.t).length*8+7; let lv=0;
+      if(L.x-lastX[0] < w){ lv=1; if(L.x-lastX[1] < w) lv=0; } lastX[lv]=L.x; L.y=rowY[lv]; });
+    lbl.forEach(L=>{ s+=`<text x="${L.x.toFixed(1)}" y="${L.y}" text-anchor="${L.anchor}" font-size="14" fill="${L.fill}">${gEsc(L.t)}</text>`; });
     dets.forEach(d=>{const dx=X(d.at);
       if(d.kind==="median"){ s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="14" fill="${GPAL.white}" stroke="${GPAL.tealDeep}" stroke-width="4"/>`;
         s+=`<text x="${dx.toFixed(1)}" y="${cy+5}" text-anchor="middle" font-size="14" font-weight="700" fill="${GPAL.tealDeep}">M</text>`;}
       else { s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="${d.r||10}" fill="${GPAL.teal}" opacity="0.9"/>`; }
-      s+=`<text x="${dx.toFixed(1)}" y="${trackY-12}" text-anchor="middle" font-size="14" fill="${GPAL.inkSoft}">${gEsc(d.at)}</text>`;
       s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="28" fill="transparent" data-v="${d.at}"/>`;});
     if(c.value!=null&&!isNaN(c.value)){const vx=X(c.value);
-      s+=`<line x1="${vx.toFixed(1)}" y1="${trackY-16}" x2="${vx.toFixed(1)}" y2="${trackY+trackH+16}" stroke="${GPAL.tealDeep}" stroke-width="3"/>`;
+      s+=`<line x1="${vx.toFixed(1)}" y1="${trackY-46}" x2="${vx.toFixed(1)}" y2="${trackY+trackH+16}" stroke="${GPAL.tealDeep}" stroke-width="3"/>`;
       s+=`<circle cx="${vx.toFixed(1)}" cy="${trackY+trackH+16}" r="12" fill="${GPAL.white}" stroke="${GPAL.tealDeep}" stroke-width="3"/>`;
-      const pw=52,ph=26,py=trackY-42, px=Math.max(x0,Math.min(x1-pw,vx-pw/2));
+      const pw=52,ph=26,py=trackY-72, px=Math.max(x0,Math.min(x1-pw,vx-pw/2));
       s+=`<rect x="${px.toFixed(1)}" y="${py}" width="${pw}" height="${ph}" rx="7" fill="${GPAL.tealDeep}"/>`;
       s+=`<text x="${(px+pw/2).toFixed(1)}" y="${py+18}" text-anchor="middle" font-size="18" font-weight="700" fill="${GPAL.white}">${gEsc(c.value)}</text>`;}
     return s+`</svg>`;
@@ -1313,16 +1335,22 @@ const UI = (() => {
       if(order.max>ab.max){ cfg.zones.push({from:ab.max,to:order.max,kind:"amber"}); cfg.ticks.push({at:ab.max,k:"H",val:ab.max,color:GPAL.amber}); }
     } else {
       const r=C[field];
-      cfg.axisMin=(d.axis&&d.axis[0])??0; cfg.axisMax=(d.axis&&d.axis[1])??r.max;
+      cfg.axisMin=Math.max(((d.axis&&d.axis[0])||0), r.min); cfg.axisMax=(d.axis&&d.axis[1])??r.max;
       cfg.hardMin=r.min; cfg.hardMax=r.max;
       const softLow=r.softLowByAge&&r.softLowByAge[band];
       if(softLow!=null){ cfg.zones.push({from:r.min,to:softLow,kind:"amber"}); cfg.ticks.push({at:softLow,k:"L",val:softLow,color:GPAL.amber}); }
       if(bd.common) cfg.zones.push({from:bd.common[0],to:bd.common[1],kind:"green"});
-      if(field==="cf"&&r.advisoryAbove!=null) cfg.ticks.push({at:r.advisoryAbove,k:"H",val:r.advisoryAbove,color:GPAL.amber});
+      if(field==="cf"&&r.advisoryAbove!=null&&band==="gte12") cfg.ticks.push({at:r.advisoryAbove,k:"H",val:r.advisoryAbove,color:GPAL.amber});
       if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,k:"H",val:r.highWarn,color:GPAL.red});
     }
     (bd.modes||[]).forEach((m,i)=>cfg.detents.push({at:m,kind:"mode",r:i===0?5.5:4.5}));
     if(bd.median!=null) cfg.detents.push({at:bd.median,kind:"median"});
+    if(field!=="target"){               // focus+context on the clustered region (sparse soft-limit ticks stay in the tails)
+      const pts=cfg.detents.map(o=>o.at);
+      if(bd.common){ pts.push(bd.common[0],bd.common[1]); }
+      if(pts.length){ let lo=Math.min(...pts), hi=Math.max(...pts); const pv=(hi-lo)*0.12||0;
+        lo=Math.max(cfg.axisMin,lo-pv); hi=Math.min(cfg.axisMax,hi+pv); if(hi>lo) cfg.focus=[lo,hi]; }
+    }
     return cfg;
   }
 
@@ -1356,13 +1384,13 @@ const UI = (() => {
     const valFromX=cx=>{ const cfg=div._cfg, r=div.getBoundingClientRect(), pad=16, W=cfg._W||r.width;
       let px=((cx-r.left)/r.width)*W;
       let fr=(px-pad)/(W-2*pad); fr=Math.max(0,Math.min(1,fr));
-      return cfg.axisMin+fr*(cfg.axisMax-cfg.axisMin); };
+      return axT(cfg).val(fr); };
     const setVal=(v,exact)=>{ const cfg=div._cfg; v=Math.round(v/step)*step;
-      if(!exact){ // light pixel-distance magnet — catches near a detente but pulls off easily
-        const usable=Math.max(1,(cfg._W||300)-32), valWin=SNAP_PX*(cfg.axisMax-cfg.axisMin)/usable;
+      if(!exact){ // light pixel-distance magnet — uniform in fraction (pixel) space, log-safe
+        const usable=Math.max(1,(cfg._W||300)-32), t=axT(cfg), fwin=SNAP_PX/usable, vf=t.frac(v);
         let best=null,bDist=Infinity;
-        (cfg.detents||[]).forEach(d=>{const dd=Math.abs(d.at-v); if(dd<bDist){bDist=dd;best=d.at;}});
-        if(best!=null&&bDist<=valWin) v=best;
+        (cfg.detents||[]).forEach(d=>{const dd=Math.abs(t.frac(d.at)-vf); if(dd<bDist){bDist=dd;best=d.at;}});
+        if(best!=null&&bDist<=fwin) v=best;
       }
       v=Math.max(cfg.hardMin,Math.min(cfg.hardMax,v));
       $(inputId).value=Math.round(v*100)/100;
