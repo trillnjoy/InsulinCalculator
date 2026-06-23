@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.8.13 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.8.15 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -654,10 +654,10 @@ const Engine = (() => {
       message = `${name} ${round2(num)} is below the allowed minimum. Corrected to ${range.min}.`; }
     else if(num > range.max){ value = range.max; corrected = true;
       message = `${name} ${round2(num)} is above the allowed maximum. Corrected to ${range.max}.`; }
-    // soft advisory: U-100 CF high — graduated. >=200 is a dedicated high warn
+    // soft advisory: U-100 CF high — graduated. >200 is a dedicated high warn
     // (all ages); >150 is the lighter verify advisory.
-    if(field === "cf" && range.highWarn != null && value >= range.highWarn){
-      advisory = `Correction factor at or above ${range.highWarn} mg/dL/unit (all ages) — high; a correction factor this large delivers very little insulin per point above target. Verify the sensitivity factor. Acknowledge to proceed.`;
+    if(field === "cf" && range.highWarn != null && value > range.highWarn){
+      advisory = `Correction factor above ${range.highWarn} mg/dL/unit (all ages) — high; a correction factor this large delivers very little insulin per point above target. Verify the sensitivity factor. Acknowledge to proceed.`;
     } else if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove && ageBandKey === "gte12"){
       advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit (\u2265 12 y) — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
     }
@@ -976,9 +976,9 @@ const UI = (() => {
       if(sl != null && params.cf < sl)
         return { state:"caution", aria:"Caution — verify",
                  msg:`Below the ${sl} age soft-floor — verify (more insulin than usual for age).` };
-      if(r.highWarn != null && params.cf >= r.highWarn)
+      if(r.highWarn != null && params.cf > r.highWarn)
         return { state:"caution", aria:"Caution — verify",
-                 msg:`At/above ${r.highWarn} mg/dL (all ages) — high; verify the correction factor.` };
+                 msg:`Above ${r.highWarn} mg/dL (all ages) — high; verify the correction factor.` };
       if(r.advisoryAbove != null && params.cf > r.advisoryAbove)
         return { state:"caution", aria:"Caution — verify",
                  msg:`Above ${r.advisoryAbove} mg/dL — verify correction factor against the order.` };
@@ -1420,7 +1420,7 @@ const UI = (() => {
       + (icLow ? ` · soft advisory below ${icLow} for this age.` : "");
     $("cfNote").textContent = `Allowed ${C.cf.min}–${C.cf.max} mg/dL per ${C.unit==='Units'?'unit':'syringe unit'}`
       + (C.cf.advisoryAbove ? ` · verify above ${C.cf.advisoryAbove}` : "")
-      + (C.cf.highWarn ? `, high warn at ${C.cf.highWarn}` : "")
+      + (C.cf.highWarn ? `, high warn above ${C.cf.highWarn}` : "")
       + (cfLow ? ` · below ${cfLow} (age)` : "")
       + ".";
     const band = C.targetBands[$("setAge").value] || Object.values(C.targetBands)[0];
