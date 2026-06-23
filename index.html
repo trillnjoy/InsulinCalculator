@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.8.6 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.8.8 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -312,8 +312,8 @@ body{
 }
 .set-input:focus{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-wash)}
 .set-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-.set-row > .set-input{flex:0 0 92px;width:92px;text-align:center;padding-left:6px;padding-right:6px}
-.gauge{flex:1 1 240px;min-width:250px;touch-action:none;cursor:pointer;user-select:none;-webkit-user-select:none}
+.set-row > .set-input{flex:0 0 60px;width:60px;text-align:center;padding-left:6px;padding-right:6px}
+.gauge{flex:1 1 auto;min-width:0;touch-action:none;cursor:pointer;user-select:none;-webkit-user-select:none}
 .gauge svg{display:block;overflow:visible}
 select.set-input{font-family:var(--sans);font-weight:500}
 .seg{display:flex;gap:8px}
@@ -1266,7 +1266,7 @@ const UI = (() => {
   const G_STEP = { ic:0.5, cf:1, target:1 };
 
   function buildGauge(c, W){
-    const pad=16, H=130, trackY=64, trackH=30, cy=trackY+trackH/2;
+    const pad=16, H=142, trackY=64, trackH=30, cy=trackY+trackH/2;
     const x0=pad, x1=W-pad, span=c.axisMax-c.axisMin;
     const X=v=>x0+(Math.max(c.axisMin,Math.min(c.axisMax,v))-c.axisMin)/span*(x1-x0);
     const zf={amber:GPAL.amberWash,green:GPAL.greenWash,neutral:GPAL.neutral};
@@ -1275,8 +1275,10 @@ const UI = (() => {
     (c.zones||[]).forEach(z=>{const zx=X(z.from),zw=X(z.to)-X(z.from); if(zw>0.5) s+=`<rect x="${zx.toFixed(1)}" y="${trackY}" width="${zw.toFixed(1)}" height="${trackH}" fill="${zf[z.kind]||GPAL.neutral}"/>`;});
     s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" rx="8" fill="none" stroke="${GPAL.line}" stroke-width="1.5"/>`;
     [c.hardMin,c.hardMax].forEach(h=>{ if(h==null)return; const hx=X(h); s+=`<rect x="${(hx-1.5).toFixed(1)}" y="${trackY-5}" width="3" height="${trackH+10}" fill="${GPAL.red}"/>`;});
-    (c.ticks||[]).forEach(t=>{const tx=X(t.at); s+=`<line x1="${tx.toFixed(1)}" y1="${trackY-4}" x2="${tx.toFixed(1)}" y2="${trackY+trackH+4}" stroke="${t.color||GPAL.amber}" stroke-width="1.5" stroke-dasharray="4,3"/>`;
-      s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+20}" text-anchor="middle" font-size="14" fill="${t.color||GPAL.amber}">${gEsc(t.label)}</text>`;});
+    (c.ticks||[]).forEach(t=>{const tx=X(t.at); const tc=t.color||GPAL.amber; s+=`<line x1="${tx.toFixed(1)}" y1="${trackY-4}" x2="${tx.toFixed(1)}" y2="${trackY+trackH+4}" stroke="${tc}" stroke-width="1.5" stroke-dasharray="4,3"/>`;
+      if(t.k){ s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+22}" text-anchor="middle" font-size="13" font-weight="700" fill="${tc}">${gEsc(t.k)}</text>`;
+        s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+37}" text-anchor="middle" font-size="12.5" fill="${tc}">${gEsc(t.val)}</text>`; }
+      else { s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+20}" text-anchor="middle" font-size="14" fill="${tc}">${gEsc(t.label)}</text>`; }});
     const near=(a,b)=>Math.abs(a-b)<=span*0.04, dets=c.detents||[];
     const hmin=c.hardMin??c.axisMin, hmax=c.hardMax??c.axisMax;
     if(!dets.some(d=>near(d.at,hmin))) s+=`<text x="${X(hmin).toFixed(1)}" y="${trackY-12}" text-anchor="start" font-size="14" fill="${GPAL.red}">${gEsc(hmin)}</text>`;
@@ -1307,17 +1309,17 @@ const UI = (() => {
       cfg.axisMin=(d.axis&&d.axis[0])??order.min; cfg.axisMax=(d.axis&&d.axis[1])??order.max;
       cfg.hardMin=order.min; cfg.hardMax=order.max;
       cfg.zones.push({from:ab.min,to:ab.max,kind:"green"});
-      if(order.min<ab.min){ cfg.zones.push({from:order.min,to:ab.min,kind:"amber"}); cfg.ticks.push({at:ab.min,label:"band",color:GPAL.green}); }
-      if(order.max>ab.max){ cfg.zones.push({from:ab.max,to:order.max,kind:"amber"}); cfg.ticks.push({at:ab.max,label:"band",color:GPAL.green}); }
+      if(order.min<ab.min){ cfg.zones.push({from:order.min,to:ab.min,kind:"amber"}); cfg.ticks.push({at:ab.min,k:"L",val:ab.min,color:GPAL.amber}); }
+      if(order.max>ab.max){ cfg.zones.push({from:ab.max,to:order.max,kind:"amber"}); cfg.ticks.push({at:ab.max,k:"H",val:ab.max,color:GPAL.amber}); }
     } else {
       const r=C[field];
       cfg.axisMin=(d.axis&&d.axis[0])??0; cfg.axisMax=(d.axis&&d.axis[1])??r.max;
       cfg.hardMin=r.min; cfg.hardMax=r.max;
       const softLow=r.softLowByAge&&r.softLowByAge[band];
-      if(softLow!=null){ cfg.zones.push({from:r.min,to:softLow,kind:"amber"}); cfg.ticks.push({at:softLow,label:"low "+softLow,color:GPAL.amber}); }
+      if(softLow!=null){ cfg.zones.push({from:r.min,to:softLow,kind:"amber"}); cfg.ticks.push({at:softLow,k:"L",val:softLow,color:GPAL.amber}); }
       if(bd.common) cfg.zones.push({from:bd.common[0],to:bd.common[1],kind:"green"});
-      if(field==="cf"&&r.advisoryAbove!=null) cfg.ticks.push({at:r.advisoryAbove,label:"warn "+r.advisoryAbove,color:GPAL.amber});
-      if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,label:"high "+r.highWarn,color:GPAL.red});
+      if(field==="cf"&&r.advisoryAbove!=null) cfg.ticks.push({at:r.advisoryAbove,k:"H",val:r.advisoryAbove,color:GPAL.amber});
+      if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,k:"H",val:r.highWarn,color:GPAL.red});
     }
     (bd.modes||[]).forEach((m,i)=>cfg.detents.push({at:m,kind:"mode",r:i===0?5.5:4.5}));
     if(bd.median!=null) cfg.detents.push({at:bd.median,kind:"median"});
