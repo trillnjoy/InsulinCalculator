@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.8.15 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.8.16 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -1414,17 +1414,26 @@ const UI = (() => {
     const conc = $("setConc").value;
     const C = CDS_CONFIG.concentrations[conc];
     const ab = $("setAge").value;
-    const icLow = C.ic.softLowByAge && C.ic.softLowByAge[ab];
-    const cfLow = C.cf.softLowByAge && C.cf.softLowByAge[ab];
-    $("icNote").textContent = `Allowed ${C.ic.min}–${C.ic.max} g per ${C.unit==='Units'?'unit':'syringe unit'}.`
-      + (icLow ? ` · soft advisory below ${icLow} for this age.` : "");
-    $("cfNote").textContent = `Allowed ${C.cf.min}–${C.cf.max} mg/dL per ${C.unit==='Units'?'unit':'syringe unit'}`
-      + (C.cf.advisoryAbove ? ` · verify above ${C.cf.advisoryAbove}` : "")
-      + (C.cf.highWarn ? `, high warn above ${C.cf.highWarn}` : "")
-      + (cfLow ? ` · below ${cfLow} (age)` : "")
-      + ".";
-    const band = C.targetBands[$("setAge").value] || Object.values(C.targetBands)[0];
-    $("targetNote").textContent = `Allowed ${band.min}–${band.max} mg/dL for ${band.label}.`;
+    const D = DIST[conc] || {};
+    const unitPhrase = C.unit === 'Units' ? 'unit' : 'syringe unit';
+    // Standardized CDS stats line — identical structure for every field, band, and concentration.
+    // Soft-limit (L/H) and verify/high-warn cues are intentionally NOT repeated here; they live on
+    // the gauge ticks and in the layered parameter PDF. Clauses self-omit when the data is absent.
+    const statLine = (med, common, lo, hi, units, modes) => {
+      let s = "";
+      if(med != null) s += `Mode/Median: ${med}; `;
+      if(common && common.length === 2) s += `Usual range: ${common[0]}–${common[1]}; `;
+      s += `Allowed: ${lo}–${hi} ${units}.`;
+      if(modes && modes.length > 1) s += " Blue dots mark frequent values.";
+      return s;
+    };
+    const dIc = (D.ic && D.ic.band && D.ic.band[ab]) || {};
+    const dCf = (D.cf && D.cf.band && D.cf.band[ab]) || {};
+    const dTg = (D.target && D.target.band && D.target.band[ab]) || {};
+    const band = C.targetBands[ab] || Object.values(C.targetBands)[0];
+    $("icNote").textContent     = statLine(dIc.median, dIc.common, C.ic.min, C.ic.max, `g per ${unitPhrase}`, dIc.modes);
+    $("cfNote").textContent     = statLine(dCf.median, dCf.common, C.cf.min, C.cf.max, `mg/dL per ${unitPhrase}`, dCf.modes);
+    $("targetNote").textContent = statLine(dTg.median, [band.min, band.max], C.targetOrder.min, C.targetOrder.max, "mg/dL", dTg.modes);
     $("ageNote").textContent = "U-100 target BG range tightens with age.";
     renderAllGauges();
   }
