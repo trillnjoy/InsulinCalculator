@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.8.20 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.8.21 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -1237,24 +1237,25 @@ const UI = (() => {
   /* ===== Order-parameter gauges — visual hard/soft limits + detente circles ===== */
   const GPAL = { tealDeep:"#0A525A", teal:"#0E6E78", inkSoft:"#5A6B74", line:"#DDE5E9",
     greenWash:"#E3F1E6", green:"#2E7D32", amberWash:"#FBEEDA", amber:"#B45309",
-    neutral:"#EFF3F4", red:"#C0392B", white:"#FFFFFF" };
+    neutral:"#EFF3F4", red:"#C0392B", white:"#FFFFFF",
+    blue:"#0072B2", orange:"#E69F00", bub:"#3B7BB0", oxblood:"#7A2733", verm:"#D55E00", mblue:"#2E6188", payne:"#445A6E" };
   function gEsc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
   // Detente data from the 3-yr order viz. Values are a starting point — verify before clinical sign-off.
   const DIST = {
     U100:{
       ic:{ axis:[0,100], band:{
-        lt5:{common:[25,60],median:40,modes:[15,20,30,35,45,60,80]},
-        a5_11:{common:[8,25],median:15,modes:[[10,8.8],[12,10.3],[15,11.6],[20,15.9],[25,7.0],[30,13.1],[40,5.1]]},
-        gte12:{common:[5,20],median:10,modes:[[4,10.4],[5,17.8],[6,12.3],[7,11.5],[8,10.7],[10,13.7],[12,6.8],[15,5.8]]} } },
+        lt5:{def:30, p:[15,15,30,35,50,60,80], median:35, modes:[[15,5.6],[20,10.6],[30,19.7],[40,12.0],[45,7.7],[50,12.0],[60,9.2]]},
+        a5_11:{def:20, p:[4.3,6,12,20,25,40,50], median:20, modes:[[10,8.8],[12,10.3],[15,11.6],[25,7.0],[30,13.1],[40,5.1]]},
+        gte12:{def:5, p:[2.5,4,5,7,10,15,35], median:7, modes:[[4,10.4],[5,17.8],[6,12.3],[8,10.7],[10,13.7],[12,6.8],[15,5.8]]} } },
       cf:{ axis:[0,300], band:{
-        lt5:{common:[128,195],median:200,modes:[60,150,180,300]},
-        a5_11:{common:[40,125],median:66,modes:[[50,18.1],[60,4.0],[75,5.5],[100,23.7],[150,7.0],[200,7.4]]},
-        gte12:{common:[20,75],median:35,modes:[[15,5.0],[20,4.6],[25,22.6],[30,10.8],[35,5.4],[40,6.7],[50,21.0],[100,5.3]]} } },
-      target:{ axis:[120,300], band:{
-        lt5:{median:200,modes:[150,180]},
-        a5_11:{median:130,modes:[120,150,180,200]},
-        gte12:{median:130,modes:[120,150]} } }
+        lt5:{def:150, p:[40,50,100,160,200,295,300], median:160, modes:[[50,7.7],[60,9.9],[100,6.3],[120,4.9],[150,14.8],[180,7.7],[200,33.1],[300,5.6]]},
+        a5_11:{def:100, p:[11.5,25,50,80,100,200,200], median:80, modes:[[50,18.1],[60,4.0],[75,5.5],[100,23.7],[150,7.0],[200,7.4]]},
+        gte12:{def:25, p:[10,15,25,30,50,100,120], median:30, modes:[[15,5.0],[20,4.6],[25,22.6],[35,5.4],[40,6.7],[50,21.0],[100,5.3]]} } },
+      target:{ axis:[100,300], band:{
+        lt5:{def:150, p:[130,130,150,150,200,200,200], median:150, modes:[[130,16],[180,12],[200,41]]},
+        a5_11:{def:130, p:[110,120,130,130,150,200,200], median:130, modes:[[120,32],[150,245],[180,36],[200,76]]},
+        gte12:{def:130, p:[110,120,130,130,150,150,180], median:130, modes:[[120,165],[150,1036]]} } }
     },
     U10:{
       ic:{ axis:[0,40],  band:{ infant:{median:20} } },
@@ -1284,12 +1285,14 @@ const UI = (() => {
     const pad=16, H=152, trackY=78, trackH=30, cy=trackY+trackH/2;
     const x0=pad, x1=W-pad, _t=axT(c);
     const X=v=>x0+_t.frac(v)*(x1-x0);
-    const zf={amber:GPAL.amberWash,green:GPAL.greenWash,neutral:GPAL.neutral};
     let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet" font-family="Arial,Helvetica,sans-serif" role="img" aria-label="${gEsc(c.aria||'')}">`;
-    s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" rx="8" fill="${GPAL.neutral}"/>`;
-    (c.zones||[]).forEach(z=>{const zx=X(z.from),zw=X(z.to)-X(z.from); if(zw>0.5) s+=`<rect x="${zx.toFixed(1)}" y="${trackY}" width="${zw.toFixed(1)}" height="${trackH}" fill="${zf[z.kind]||GPAL.neutral}"/>`;});
-    s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" rx="8" fill="none" stroke="${GPAL.line}" stroke-width="1.5"/>`;
-    [c.hardMin,c.hardMax].forEach(h=>{ if(h==null)return; const hx=X(h); s+=`<rect x="${(hx-1.5).toFixed(1)}" y="${trackY-5}" width="3" height="${trackH+10}" fill="${GPAL.red}"/>`;});
+    const _clip="tk"+Math.floor(Math.random()*1e6);
+    s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" fill="${GPAL.neutral}"/>`;
+    s+=`<clipPath id="${_clip}"><rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}"/></clipPath><g clip-path="url(#${_clip})">`;
+    (c.pzones||[]).forEach(z=>{const zx=X(z.from),zw=X(z.to)-X(z.from); if(zw>0.4) s+=`<rect x="${zx.toFixed(1)}" y="${trackY}" width="${zw.toFixed(1)}" height="${trackH}" fill="${z.col}" fill-opacity="${z.op}"/>`;});
+    s+=`</g>`;
+    s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" fill="none" stroke="${GPAL.line}" stroke-width="1.5"/>`;
+    [c.hardMin,c.hardMax].forEach(h=>{ if(h==null)return; const hx=X(h); s+=`<rect x="${(hx-1.5).toFixed(1)}" y="${trackY-5}" width="3" height="${trackH+10}" fill="${GPAL.oxblood}"/>`;});
     (c.ticks||[]).forEach(t=>{const tx=X(t.at); const tc=t.color||GPAL.amber; s+=`<line x1="${tx.toFixed(1)}" y1="${trackY-4}" x2="${tx.toFixed(1)}" y2="${trackY+trackH+4}" stroke="${tc}" stroke-width="1.5" stroke-dasharray="4,3"/>`;
       if(t.k){ s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+22}" text-anchor="middle" font-size="13" font-weight="700" fill="${tc}">${gEsc(t.k)}</text>`;
         s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+37}" text-anchor="middle" font-size="12.5" fill="${tc}">${gEsc(t.val)}</text>`; }
@@ -1298,24 +1301,24 @@ const UI = (() => {
     const hmin=c.hardMin??c.axisMin, hmax=c.hardMax??c.axisMax;
     // top numeric labels collected, then staggered onto 2 rows so dense clusters keep every value legible
     const lbl=[];
-    if(!dets.some(d=>near(d.at,hmin))) lbl.push({x:X(hmin), t:hmin, fill:GPAL.red, anchor:"start"});
+    if(!dets.some(d=>near(d.at,hmin))) lbl.push({x:X(hmin), t:hmin, fill:GPAL.oxblood, anchor:"start"});
     dets.forEach(d=>lbl.push({x:X(d.at), t:d.at, fill:GPAL.inkSoft, anchor:"middle"}));
-    if(!dets.some(d=>near(d.at,hmax))) lbl.push({x:X(hmax), t:hmax, fill:GPAL.red, anchor:"end"});
+    if(!dets.some(d=>near(d.at,hmax))) lbl.push({x:X(hmax), t:hmax, fill:GPAL.oxblood, anchor:"end"});
     lbl.sort((a,b)=>a.x-b.x);
     const rowY=[trackY-12, trackY-30]; let lastX=[-1e9,-1e9];
     lbl.forEach(L=>{ const w=String(L.t).length*8+7; let lv=0;
       if(L.x-lastX[0] < w){ lv=1; if(L.x-lastX[1] < w) lv=0; } lastX[lv]=L.x; L.y=rowY[lv]; });
     lbl.forEach(L=>{ s+=`<text x="${L.x.toFixed(1)}" y="${L.y}" text-anchor="${L.anchor}" font-size="14" fill="${L.fill}">${gEsc(L.t)}</text>`; });
     dets.forEach(d=>{const dx=X(d.at);
-      if(d.kind==="median"){ s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="14" fill="${GPAL.white}" stroke="${GPAL.tealDeep}" stroke-width="4"/>`;
-        s+=`<text x="${dx.toFixed(1)}" y="${cy+5}" text-anchor="middle" font-size="14" font-weight="700" fill="${GPAL.tealDeep}">M</text>`;}
-      else { s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="${d.r||10}" fill="${GPAL.teal}" opacity="0.9"/>`; }
+      if(d.kind==="median"){ s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="14" fill="${GPAL.white}" stroke="${GPAL.mblue}" stroke-width="4"/>`;
+        s+=`<text x="${dx.toFixed(1)}" y="${cy+5}" text-anchor="middle" font-size="14" font-weight="700" fill="${GPAL.mblue}">M</text>`;}
+      else { s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="${d.r||10}" fill="${GPAL.bub}" fill-opacity="0.33"/>`; }
       s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="28" fill="transparent" data-v="${d.at}"/>`;});
     if(c.value!=null&&!isNaN(c.value)){const vx=X(c.value);
-      s+=`<line x1="${vx.toFixed(1)}" y1="${trackY-46}" x2="${vx.toFixed(1)}" y2="${trackY+trackH+16}" stroke="${GPAL.tealDeep}" stroke-width="3"/>`;
-      s+=`<circle cx="${vx.toFixed(1)}" cy="${trackY+trackH+16}" r="12" fill="${GPAL.white}" stroke="${GPAL.tealDeep}" stroke-width="3"/>`;
+      s+=`<line x1="${vx.toFixed(1)}" y1="${trackY-46}" x2="${vx.toFixed(1)}" y2="${trackY+trackH+16}" stroke="${GPAL.payne}" stroke-width="3"/>`;
+      s+=`<circle cx="${vx.toFixed(1)}" cy="${trackY+trackH+16}" r="12" fill="${GPAL.white}" stroke="${GPAL.payne}" stroke-width="3"/>`;
       const pw=52,ph=26,py=trackY-72, px=Math.max(x0,Math.min(x1-pw,vx-pw/2));
-      s+=`<rect x="${px.toFixed(1)}" y="${py}" width="${pw}" height="${ph}" rx="7" fill="${GPAL.tealDeep}"/>`;
+      s+=`<rect x="${px.toFixed(1)}" y="${py}" width="${pw}" height="${ph}" rx="7" fill="${GPAL.payne}"/>`;
       s+=`<text x="${(px+pw/2).toFixed(1)}" y="${py+18}" text-anchor="middle" font-size="18" font-weight="700" fill="${GPAL.white}">${gEsc(c.value)}</text>`;}
     return s+`</svg>`;
   }
@@ -1325,24 +1328,27 @@ const UI = (() => {
     const C=CDS_CONFIG.concentrations[conc];
     const d=(DIST[conc]||{})[field]||{}, bd=(d.band||{})[band]||{};
     const raw=parseFloat($(G_IDS[field][0]).value);
-    const cfg={ value:isNaN(raw)?null:raw, zones:[], ticks:[], detents:[], aria:field+" range gauge" };
+    const cfg={ value:isNaN(raw)?null:raw, pzones:[], ticks:[], detents:[], aria:field+" range gauge" };
     if(field==="target"){
       const order=C.targetOrder, ab=C.targetBands[band]||Object.values(C.targetBands)[0];
       cfg.axisMin=(d.axis&&d.axis[0])??order.min; cfg.axisMax=(d.axis&&d.axis[1])??order.max;
       cfg.hardMin=order.min; cfg.hardMax=order.max;
-      cfg.zones.push({from:ab.min,to:ab.max,kind:"green"});
-      if(order.min<ab.min){ cfg.zones.push({from:order.min,to:ab.min,kind:"amber"}); cfg.ticks.push({at:ab.min,k:"L",val:ab.min,color:GPAL.amber}); }
-      if(order.max>ab.max){ cfg.zones.push({from:ab.max,to:order.max,kind:"amber"}); cfg.ticks.push({at:ab.max,k:"H",val:ab.max,color:GPAL.amber}); }
+      if(order.min<ab.min) cfg.ticks.push({at:ab.min,k:"L",val:ab.min,color:GPAL.verm});
+      if(order.max>ab.max) cfg.ticks.push({at:ab.max,k:"H",val:ab.max,color:GPAL.verm});
     } else {
       const r=C[field];
       cfg.axisMin=Math.max(((d.axis&&d.axis[0])||0), r.min); cfg.axisMax=(d.axis&&d.axis[1])??r.max;
       cfg.hardMin=r.min; cfg.hardMax=r.max;
       const softLow=r.softLowByAge&&r.softLowByAge[band];
-      if(softLow!=null){ cfg.zones.push({from:r.min,to:softLow,kind:"amber"}); cfg.ticks.push({at:softLow,k:"L",val:softLow,color:GPAL.amber}); }
-      if(bd.common) cfg.zones.push({from:bd.common[0],to:bd.common[1],kind:"green"});
-      if(field==="cf"&&r.advisoryAbove!=null&&band==="gte12") cfg.ticks.push({at:r.advisoryAbove,k:"H",val:r.advisoryAbove,color:GPAL.amber});
-      if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,k:"H",val:r.highWarn,color:GPAL.red});
+      if(softLow!=null) cfg.ticks.push({at:softLow,k:"L",val:softLow,color:GPAL.verm});
+      if(field==="cf"&&r.advisoryAbove!=null&&band==="gte12") cfg.ticks.push({at:r.advisoryAbove,k:"H",val:r.advisoryAbove,color:GPAL.verm});
+      if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,k:"H",val:r.highWarn,color:GPAL.verm});
     }
+    if(bd.p && bd.p.length===7){ const P=bd.p, aMin=cfg.axisMin, aMax=cfg.axisMax;
+      const seg=(a,b,col,op)=>{ if(b>a) cfg.pzones.push({from:a,to:b,col,op}); };
+      seg(aMin,P[0],GPAL.orange,0.40); seg(P[0],P[1],GPAL.blue,0.10); seg(P[1],P[2],GPAL.blue,0.20);
+      seg(P[2],P[4],GPAL.blue,0.40); seg(P[4],P[5],GPAL.blue,0.20); seg(P[5],P[6],GPAL.blue,0.10);
+      seg(P[6],aMax,GPAL.orange,0.40); }
     const _md=(bd.modes||[]).map(m=>Array.isArray(m)?{at:m[0],w:m[1]}:{at:m,w:null});
     const _wx=Math.max(0,..._md.map(m=>m.w||0));
     _md.forEach((m,i)=>{ if(m.at===bd.median) return;   // median shown by its own M marker
@@ -1351,7 +1357,7 @@ const UI = (() => {
     if(bd.median!=null) cfg.detents.push({at:bd.median,kind:"median"});
     if(field!=="target"){               // focus+context on the clustered region (sparse soft-limit ticks stay in the tails)
       const pts=cfg.detents.map(o=>o.at);
-      if(bd.common){ pts.push(bd.common[0],bd.common[1]); }
+      if(bd.p){ pts.push(bd.p[2],bd.p[4]); }
       if(pts.length){ let lo=Math.min(...pts), hi=Math.max(...pts); const pv=(hi-lo)*0.12||0;
         lo=Math.max(cfg.axisMin,lo-pv); hi=Math.min(cfg.axisMax,hi+pv); if(hi>lo) cfg.focus=[lo,hi]; }
     }
@@ -1435,9 +1441,10 @@ const UI = (() => {
     const dCf = (D.cf && D.cf.band && D.cf.band[ab]) || {};
     const dTg = (D.target && D.target.band && D.target.band[ab]) || {};
     const band = C.targetBands[ab] || Object.values(C.targetBands)[0];
-    $("icNote").textContent     = statLine(dIc.median, dIc.common, C.ic.min, C.ic.max, `g per ${unitPhrase}`, dIc.modes);
-    $("cfNote").textContent     = statLine(dCf.median, dCf.common, C.cf.min, C.cf.max, `mg/dL per ${unitPhrase}`, dCf.modes);
-    $("targetNote").textContent = statLine(dTg.median, [band.min, band.max], C.targetOrder.min, C.targetOrder.max, "mg/dL", dTg.modes);
+    const iqr = p => (p && p.length===7) ? [p[2],p[4]] : null;
+    $("icNote").textContent     = statLine(dIc.median, iqr(dIc.p), C.ic.min, C.ic.max, `g per ${unitPhrase}`, dIc.modes);
+    $("cfNote").textContent     = statLine(dCf.median, iqr(dCf.p), C.cf.min, C.cf.max, `mg/dL per ${unitPhrase}`, dCf.modes);
+    $("targetNote").textContent = statLine(dTg.median, iqr(dTg.p)||[band.min, band.max], C.targetOrder.min, C.targetOrder.max, "mg/dL", dTg.modes);
     $("ageNote").textContent = "U-100 target BG range tightens with age.";
     renderAllGauges();
   }
@@ -1448,9 +1455,11 @@ const UI = (() => {
     const band = (CDS_CONFIG.concentrations[conc].targetBands || {})[ageBand];
     if(!band || !band.def) return;          // e.g. U-10 has no per-band defaults
     const d = band.def;
-    $("setIc").value = d.ic;
-    $("setCf").value = d.cf;
-    $("setTarget").value = d.target;
+    const Dc = DIST[conc] || {};
+    const pref = f => { const b=((Dc[f]&&Dc[f].band&&Dc[f].band[ageBand])||{}); return b.def ?? b.median; };
+    $("setIc").value = pref("ic") ?? d.ic;
+    $("setCf").value = pref("cf") ?? d.cf;
+    $("setTarget").value = pref("target") ?? d.target;
     $("setRound").dataset.val = d.increment;
     [...$("setRound").children].forEach(b =>
       b.setAttribute("aria-pressed", Math.abs(parseFloat(b.dataset.inc) - d.increment) < 1e-9 ? "true" : "false"));
