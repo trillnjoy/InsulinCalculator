@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.8.16 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.8.20 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -1245,12 +1245,12 @@ const UI = (() => {
     U100:{
       ic:{ axis:[0,100], band:{
         lt5:{common:[25,60],median:40,modes:[15,20,30,35,45,60,80]},
-        a5_11:{common:[9,28],median:15,modes:[8,10,12,20,25,30,40,50]},
-        gte12:{common:[5,23],median:10,modes:[2,4,5,8,12,15]} } },
+        a5_11:{common:[8,25],median:15,modes:[[10,8.8],[12,10.3],[15,11.6],[20,15.9],[25,7.0],[30,13.1],[40,5.1]]},
+        gte12:{common:[5,20],median:10,modes:[[4,10.4],[5,17.8],[6,12.3],[7,11.5],[8,10.7],[10,13.7],[12,6.8],[15,5.8]]} } },
       cf:{ axis:[0,300], band:{
         lt5:{common:[128,195],median:200,modes:[60,150,180,300]},
-        a5_11:{common:[36,124],median:100,modes:[30,50,60,75,120,150,200]},
-        gte12:{common:[20,71],median:50,modes:[15,25,30,40,60,100,120]} } },
+        a5_11:{common:[40,125],median:66,modes:[[50,18.1],[60,4.0],[75,5.5],[100,23.7],[150,7.0],[200,7.4]]},
+        gte12:{common:[20,75],median:35,modes:[[15,5.0],[20,4.6],[25,22.6],[30,10.8],[35,5.4],[40,6.7],[50,21.0],[100,5.3]]} } },
       target:{ axis:[120,300], band:{
         lt5:{median:200,modes:[150,180]},
         a5_11:{median:130,modes:[120,150,180,200]},
@@ -1343,7 +1343,11 @@ const UI = (() => {
       if(field==="cf"&&r.advisoryAbove!=null&&band==="gte12") cfg.ticks.push({at:r.advisoryAbove,k:"H",val:r.advisoryAbove,color:GPAL.amber});
       if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,k:"H",val:r.highWarn,color:GPAL.red});
     }
-    (bd.modes||[]).forEach((m,i)=>cfg.detents.push({at:m,kind:"mode",r:i===0?5.5:4.5}));
+    const _md=(bd.modes||[]).map(m=>Array.isArray(m)?{at:m[0],w:m[1]}:{at:m,w:null});
+    const _wx=Math.max(0,..._md.map(m=>m.w||0));
+    _md.forEach((m,i)=>{ if(m.at===bd.median) return;   // median shown by its own M marker
+      const r=(_wx>0 && m.w!=null) ? Math.max(3, 8.5*Math.sqrt(m.w/_wx)) : (i===0?5.5:4.5);
+      cfg.detents.push({at:m.at,kind:"mode",r}); });
     if(bd.median!=null) cfg.detents.push({at:bd.median,kind:"median"});
     if(field!=="target"){               // focus+context on the clustered region (sparse soft-limit ticks stay in the tails)
       const pts=cfg.detents.map(o=>o.at);
