@@ -7,6 +7,13 @@
  *  version creates a fresh cache and the `activate` handler deletes every older
  *  `insulin-calc-*` cache. Clients get the new assets on their next load.
  *
+ *  VERSION  = precise, monotonic cache key (changes EVERY deploy). Internal.
+ *  RELEASE  = friendly label shown in the app footer. Stays stable across the
+ *             small patch bumps you make between pilot sessions, so committee
+ *             reviewers see a clean release name instead of a long patch tail.
+ *             The precise VERSION still rides along (footer tooltip) so you can
+ *             verify exactly which build deployed.
+ *
  *  STRATEGY
  *  --------
  *  · Navigations / HTML  -> network-first (the freshest deployed calculator wins
@@ -15,7 +22,8 @@
  *  · Non-GET / cross-origin (e.g. the optional result webhook) -> passthrough.
  * ===========================================================================*/
 
-const VERSION = "v1.8.21";
+const VERSION = "v1.9.0";          // cache key — bump every deploy (monotonic)
+const RELEASE = "1.9";             // committee-facing label shown in the footer
 const CACHE = `insulin-calc-${VERSION}`;
 
 // App shell — fully self-contained, no external assets.
@@ -104,7 +112,7 @@ async function cacheFirst(req){
 // Page <-> worker messaging: version readout + optional immediate update.
 self.addEventListener("message", event => {
   if (event.data === "GET_VERSION" && event.source) {
-    event.source.postMessage({ type: "VERSION", version: VERSION });
+    event.source.postMessage({ type: "VERSION", version: VERSION, release: RELEASE });
   }
   if (event.data === "SKIP_WAITING") self.skipWaiting();
 });

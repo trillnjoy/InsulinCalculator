@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.8.21 · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.9.0 (release 1.9) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -305,7 +305,15 @@ body{
 .sheet-body{padding:18px}
 .set-group{margin-bottom:20px}
 .set-group > label{display:block;font-size:13px;font-weight:600;margin-bottom:7px;color:var(--ink)}
+.set-head{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+.set-head > label{margin:0;font-size:13px;font-weight:600;color:var(--ink)}
+.info-tap{appearance:none;border:none;background:none;margin:0;padding:3px;line-height:0;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border-radius:50%;
+  color:var(--ink-faint);-webkit-tap-highlight-color:transparent;transition:color .12s}
+.info-tap:hover,.info-tap[aria-expanded="true"]{color:var(--teal)}
 .set-group .note{font-size:11.5px;color:var(--ink-faint);margin-top:6px;line-height:1.4}
+.set-group .note.set-note{display:none;margin-top:8px}
+.set-group .note.set-note.open{display:block}
 .set-input{
   width:100%;font-family:var(--mono);font-size:16px;padding:11px 12px;
   border:1.5px solid var(--line-strong);border-radius:10px;background:#fcfdfd;color:var(--ink);outline:none;
@@ -470,69 +478,80 @@ select.set-input{font-family:var(--sans);font-weight:500}
           <option value="U100">U-100 Standard — dosed in Units</option>
           <option value="U10">U-10 Dilute — dosed in Syringe Units (infants ≤ 12 mo)</option>
         </select>
-        <div class="note" id="concNote"></div>
       </div>
 
       <div class="set-group" id="ageGroup">
-        <label for="setAge">Patient age band (sets target BG range)</label>
+        <label for="setAge">Patient age band</label>
         <select id="setAge" class="set-input"></select>
-        <div class="note" id="ageNote"></div>
       </div>
 
       <div class="set-group">
-        <label for="setIc">Insulin : carb ratio</label>
+        <div class="set-head">
+          <label for="setIc">Insulin : carb ratio</label>
+          <button type="button" class="info-tap" data-note="icNote" aria-label="Insulin:carb ratio details" aria-expanded="false"><svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><circle cx="10" cy="10" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6.4" r="1.1" fill="currentColor"/><rect x="9.1" y="8.7" width="1.8" height="6" rx="0.9" fill="currentColor"/></svg></button>
+        </div>
         <div class="set-row">
           <input id="setIc" class="set-input" type="number" inputmode="decimal" step="0.5" placeholder="e.g. 15">
           <div class="gauge" id="icGauge"></div>
         </div>
-        <div class="note" id="icNote"></div>
+        <div class="note set-note" id="icNote"></div>
         <div class="setmsg" id="icMsg"></div>
       </div>
 
       <div class="set-group">
-        <label for="setCf">Correction factor (ISF)</label>
+        <div class="set-head">
+          <label for="setCf">Correction factor (ISF)</label>
+          <button type="button" class="info-tap" data-note="cfNote" aria-label="Correction factor details" aria-expanded="false"><svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><circle cx="10" cy="10" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6.4" r="1.1" fill="currentColor"/><rect x="9.1" y="8.7" width="1.8" height="6" rx="0.9" fill="currentColor"/></svg></button>
+        </div>
         <div class="set-row">
           <input id="setCf" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 30">
           <div class="gauge" id="cfGauge"></div>
         </div>
-        <div class="note" id="cfNote"></div>
+        <div class="note set-note" id="cfNote"></div>
         <div class="setmsg" id="cfMsg"></div>
       </div>
 
       <div class="set-group">
-        <label for="setTarget">Target blood glucose</label>
+        <div class="set-head">
+          <label for="setTarget">Target blood glucose</label>
+          <button type="button" class="info-tap" data-note="targetNote" aria-label="Target blood glucose details" aria-expanded="false"><svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><circle cx="10" cy="10" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6.4" r="1.1" fill="currentColor"/><rect x="9.1" y="8.7" width="1.8" height="6" rx="0.9" fill="currentColor"/></svg></button>
+        </div>
         <div class="set-row">
           <input id="setTarget" class="set-input" type="number" inputmode="decimal" step="1" placeholder="e.g. 120">
           <div class="gauge" id="targetGauge"></div>
         </div>
-        <div class="note" id="targetNote"></div>
+        <div class="note set-note" id="targetNote"></div>
         <div class="setmsg" id="targetMsg"></div>
       </div>
 
       <div class="set-group">
-        <label>Rounding increment</label>
-        <div class="seg" id="setRound"></div>
-        <div class="note" id="roundNote"></div>
-      </div>
-
-      <details class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
-        <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Deployment notes — FHIR SMART &amp; webhooks</summary>
-        <div class="kv" id="deployNotes" style="margin-top:12px"></div>
-      </details>
-
-      <details class="set-group" style="border-top:1px solid var(--line);padding-top:16px">
-        <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Advanced — result webhook (optional)</summary>
-        <div style="margin-top:12px">
-          <input id="setWebhook" class="set-input" type="url" placeholder="https://… (leave blank for standalone)" style="font-family:var(--mono);font-size:13px">
-          <div class="note">When set, each calculated dose is POSTed as JSON. In a SMART deployment this is replaced by a CDS Hooks / documentation call. Leave blank to keep everything on-device.</div>
+        <div class="set-head">
+          <label>Rounding increment</label>
+          <button type="button" class="info-tap" data-note="roundNote" aria-label="Rounding increment details" aria-expanded="false"><svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><circle cx="10" cy="10" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6.4" r="1.1" fill="currentColor"/><rect x="9.1" y="8.7" width="1.8" height="6" rx="0.9" fill="currentColor"/></svg></button>
         </div>
-      </details>
+        <div class="seg" id="setRound"></div>
+        <div class="note set-note" id="roundNote"></div>
+      </div>
 
     </div>
     <div class="sheet-foot">
       <button class="btn btn-ghost" id="btnCancel" style="flex:1">Cancel</button>
       <button class="btn btn-primary" id="btnSave" style="flex:2">Save parameters</button>
     </div>
+
+    <details class="set-group" style="margin:16px 18px 0;border-top:1px solid var(--line);padding-top:16px">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Deployment notes — FHIR SMART &amp; webhooks</summary>
+      <div class="kv" id="deployNotes" style="margin-top:12px"></div>
+    </details>
+
+    <details class="set-group" style="margin:0 18px;border-top:1px solid var(--line);padding-top:16px">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px;list-style:none">Advanced — result webhook (optional)</summary>
+      <div style="margin-top:12px">
+        <input id="setWebhook" class="set-input" type="url" placeholder="https://… (leave blank for standalone)" style="font-family:var(--mono);font-size:13px">
+        <div class="note">When set, each calculated dose is POSTed as JSON. In a SMART deployment this is replaced by a CDS Hooks / documentation call. Leave blank to keep everything on-device.</div>
+      </div>
+    </details>
+
     <div style="height:8px"></div>
   </div>
 </div>
@@ -1207,9 +1226,6 @@ const UI = (() => {
     // U-10 has a single band; hide selector but keep it valid
     $("ageGroup").style.display = (Object.keys(C.targetBands).length > 1) ? "" : "none";
     if(Object.keys(C.targetBands).length === 1) ageSel.value = Object.keys(C.targetBands)[0];
-    $("concNote").textContent = conc === "U10"
-      ? "U-10 uses syringe units calibrated to U-100 markings — no concentration conversion, mL never shown."
-      : "Standard U-100 product. Dose displayed in Units.";
     renderRoundSeg();
     refreshSetNotes();
   }
@@ -1282,9 +1298,38 @@ const UI = (() => {
     return { frac:v=>{const cl=Math.max(aMin,Math.min(aMax,v)); return (cl-aMin)/d;}, val:f=>aMin+f*d };
   }
   function buildGauge(c, W){
-    const pad=16, H=152, trackY=78, trackH=30, cy=trackY+trackH/2;
+    const pad=16, trackH=30;
     const x0=pad, x1=W-pad, _t=axT(c);
     const X=v=>x0+_t.frac(v)*(x1-x0);
+    const near=(a,b)=>Math.abs(_t.frac(a)-_t.frac(b))<=0.04, dets=c.detents||[];
+    const hmin=c.hardMin??c.axisMin, hmax=c.hardMax??c.axisMax;
+
+    // --- top numeric labels: collect bounds + every detent value (no culling) ---
+    const lbl=[];
+    if(!dets.some(d=>near(d.at,hmin))) lbl.push({x:X(hmin), t:hmin, fill:GPAL.oxblood, anchor:"start"});
+    dets.forEach(d=>lbl.push({x:X(d.at), t:d.at, fill:GPAL.inkSoft, anchor:"middle"}));
+    if(!dets.some(d=>near(d.at,hmax))) lbl.push({x:X(hmax), t:hmax, fill:GPAL.oxblood, anchor:"end"});
+    // shelf-pack onto as many rows as needed: drop each label (l→r) into the first row it clears,
+    // open a new row only when none fits. Deterministic, zero overlap, every value kept.
+    const LF=13, CW=7.2, GAP=5;
+    const lw=L=>String(L.t).length*CW+4;
+    lbl.forEach(L=>{const w=lw(L);
+      L._l = L.anchor==="start"? L.x : L.anchor==="end"? L.x-w : L.x-w/2;
+      L._r = L._l+w; });
+    lbl.sort((a,b)=>a._l-b._l);
+    const rowR=[];
+    lbl.forEach(L=>{ let p=-1;
+      for(let i=0;i<rowR.length;i++){ if(L._l>=rowR[i]+GAP){ rowR[i]=L._r; p=i; break; } }
+      if(p<0){ rowR.push(L._r); p=rowR.length-1; } L.row=p; });
+    const nRows=Math.max(1,rowR.length);
+
+    // --- vertical geometry, derived from row count: short when sparse, grows only as the cluster needs ---
+    const labelBase=12, labelStep=15, ascent=11, pillH=24, pillGap=6, topMargin=2;
+    const topRowTop = labelBase + (nRows-1)*labelStep + ascent;   // track-top → top of highest label
+    const trackY = topMargin + pillH + pillGap + topRowTop, cy=trackY+trackH/2;
+    const belowH = (c.ticks&&c.ticks.length) ? 44 : 34;           // L/H two-line ticks vs bare thumb handle
+    const H = Math.round(trackY + trackH + belowH);
+
     let s=`<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet" font-family="Arial,Helvetica,sans-serif" role="img" aria-label="${gEsc(c.aria||'')}">`;
     const _clip="tk"+Math.floor(Math.random()*1e6);
     s+=`<rect x="${x0}" y="${trackY}" width="${x1-x0}" height="${trackH}" fill="${GPAL.neutral}"/>`;
@@ -1297,29 +1342,20 @@ const UI = (() => {
       if(t.k){ s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+22}" text-anchor="middle" font-size="13" font-weight="700" fill="${tc}">${gEsc(t.k)}</text>`;
         s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+37}" text-anchor="middle" font-size="12.5" fill="${tc}">${gEsc(t.val)}</text>`; }
       else { s+=`<text x="${tx.toFixed(1)}" y="${trackY+trackH+20}" text-anchor="middle" font-size="14" fill="${tc}">${gEsc(t.label)}</text>`; }});
-    const near=(a,b)=>Math.abs(_t.frac(a)-_t.frac(b))<=0.04, dets=c.detents||[];
-    const hmin=c.hardMin??c.axisMin, hmax=c.hardMax??c.axisMax;
-    // top numeric labels collected, then staggered onto 2 rows so dense clusters keep every value legible
-    const lbl=[];
-    if(!dets.some(d=>near(d.at,hmin))) lbl.push({x:X(hmin), t:hmin, fill:GPAL.oxblood, anchor:"start"});
-    dets.forEach(d=>lbl.push({x:X(d.at), t:d.at, fill:GPAL.inkSoft, anchor:"middle"}));
-    if(!dets.some(d=>near(d.at,hmax))) lbl.push({x:X(hmax), t:hmax, fill:GPAL.oxblood, anchor:"end"});
-    lbl.sort((a,b)=>a.x-b.x);
-    const rowY=[trackY-12, trackY-30]; let lastX=[-1e9,-1e9];
-    lbl.forEach(L=>{ const w=String(L.t).length*8+7; let lv=0;
-      if(L.x-lastX[0] < w){ lv=1; if(L.x-lastX[1] < w) lv=0; } lastX[lv]=L.x; L.y=rowY[lv]; });
-    lbl.forEach(L=>{ s+=`<text x="${L.x.toFixed(1)}" y="${L.y}" text-anchor="${L.anchor}" font-size="14" fill="${L.fill}">${gEsc(L.t)}</text>`; });
+    // top labels (shelf rows grow upward from just above the track)
+    lbl.forEach(L=>{ const y=trackY - labelBase - L.row*labelStep;
+      s+=`<text x="${L.x.toFixed(1)}" y="${y}" text-anchor="${L.anchor}" font-size="${LF}" fill="${L.fill}">${gEsc(L.t)}</text>`; });
     dets.forEach(d=>{const dx=X(d.at);
       if(d.kind==="median"){ s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="14" fill="${GPAL.white}" stroke="${GPAL.mblue}" stroke-width="4"/>`;
         s+=`<text x="${dx.toFixed(1)}" y="${cy+5}" text-anchor="middle" font-size="14" font-weight="700" fill="${GPAL.mblue}">M</text>`;}
       else { s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="${d.r||10}" fill="${GPAL.bub}" fill-opacity="0.33"/>`; }
       s+=`<circle cx="${dx.toFixed(1)}" cy="${cy}" r="28" fill="transparent" data-v="${d.at}"/>`;});
     if(c.value!=null&&!isNaN(c.value)){const vx=X(c.value);
-      s+=`<line x1="${vx.toFixed(1)}" y1="${trackY-46}" x2="${vx.toFixed(1)}" y2="${trackY+trackH+16}" stroke="${GPAL.payne}" stroke-width="3"/>`;
+      s+=`<line x1="${vx.toFixed(1)}" y1="${topMargin+pillH}" x2="${vx.toFixed(1)}" y2="${trackY+trackH+16}" stroke="${GPAL.payne}" stroke-width="3"/>`;
       s+=`<circle cx="${vx.toFixed(1)}" cy="${trackY+trackH+16}" r="12" fill="${GPAL.white}" stroke="${GPAL.payne}" stroke-width="3"/>`;
-      const pw=52,ph=26,py=trackY-72, px=Math.max(x0,Math.min(x1-pw,vx-pw/2));
-      s+=`<rect x="${px.toFixed(1)}" y="${py}" width="${pw}" height="${ph}" rx="7" fill="${GPAL.payne}"/>`;
-      s+=`<text x="${(px+pw/2).toFixed(1)}" y="${py+18}" text-anchor="middle" font-size="18" font-weight="700" fill="${GPAL.white}">${gEsc(c.value)}</text>`;}
+      const pw=52, px=Math.max(x0,Math.min(x1-pw,vx-pw/2));
+      s+=`<rect x="${px.toFixed(1)}" y="${topMargin}" width="${pw}" height="${pillH}" rx="7" fill="${GPAL.payne}"/>`;
+      s+=`<text x="${(px+pw/2).toFixed(1)}" y="${topMargin+17}" text-anchor="middle" font-size="18" font-weight="700" fill="${GPAL.white}">${gEsc(c.value)}</text>`;}
     return s+`</svg>`;
   }
 
@@ -1445,7 +1481,6 @@ const UI = (() => {
     $("icNote").textContent     = statLine(dIc.median, iqr(dIc.p), C.ic.min, C.ic.max, `g per ${unitPhrase}`, dIc.modes);
     $("cfNote").textContent     = statLine(dCf.median, iqr(dCf.p), C.cf.min, C.cf.max, `mg/dL per ${unitPhrase}`, dCf.modes);
     $("targetNote").textContent = statLine(dTg.median, iqr(dTg.p)||[band.min, band.max], C.targetOrder.min, C.targetOrder.max, "mg/dL", dTg.modes);
-    $("ageNote").textContent = "U-100 target BG range tightens with age.";
     renderAllGauges();
   }
 
@@ -1638,6 +1673,11 @@ const UI = (() => {
     $("btnCloseSheet").addEventListener("click", closeSheet);
     $("btnCancel").addEventListener("click", closeSheet);
     $("btnSave").addEventListener("click", save);
+    document.querySelectorAll(".info-tap").forEach(b => b.addEventListener("click", () => {
+      const n = $(b.dataset.note); if(!n) return;
+      const open = n.classList.toggle("open");
+      b.setAttribute("aria-expanded", open ? "true" : "false");
+    }));
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
     document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeSheet(); closeMealSheet(); } });
 
@@ -1673,13 +1713,13 @@ document.addEventListener("DOMContentLoaded", UI.init);
 /* ---------------- PWA: service worker registration + version readout ----------------
    sw.js owns the version (cache key). The page asks the active worker for its
    version string and shows it in the footer so a deploy can be verified at a glance. */
-function showBuildTag(v){ const el = document.getElementById("buildTag"); if(el) el.textContent = "Offline-ready · " + v; }
+function showBuildTag(display, build){ const el = document.getElementById("buildTag"); if(!el) return; el.textContent = "Offline-ready · " + display; if(build) el.title = "build " + build; }
 if("serviceWorker" in navigator){
   window.addEventListener("load", async () => {
     try{
       await navigator.serviceWorker.register("sw.js");
       navigator.serviceWorker.addEventListener("message", ev => {
-        if(ev.data && ev.data.type === "VERSION") showBuildTag(ev.data.version);
+        if(ev.data && ev.data.type === "VERSION") showBuildTag(ev.data.release || ev.data.version, ev.data.version);
       });
       const askVersion = () => navigator.serviceWorker.controller &&
         navigator.serviceWorker.controller.postMessage("GET_VERSION");
