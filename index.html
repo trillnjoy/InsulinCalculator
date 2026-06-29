@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.9.1 (release 1.9) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.10.0 (release 1.10) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -407,7 +407,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
         <span class="iob-hint">Holds the correction to prevent stacking.</span>
       </span>
     </label>
-    <div class="input-row">
+    <div class="input-row" id="carbRow">
       <div class="input-top">
         <div class="input-label">
           <div class="name">Carbohydrates eaten</div>
@@ -485,7 +485,16 @@ select.set-input{font-family:var(--sans);font-weight:500}
         <select id="setAge" class="set-input"></select>
       </div>
 
-      <div class="set-group">
+      <div class="set-group" id="regimenGroup" style="display:none">
+        <div class="set-head">
+          <label>U-10 order type</label>
+          <button type="button" class="info-tap" data-note="regimenNote" aria-label="U-10 order type details" aria-expanded="false"><svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><circle cx="10" cy="10" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6.4" r="1.1" fill="currentColor"/><rect x="9.1" y="8.7" width="1.8" height="6" rx="0.9" fill="currentColor"/></svg></button>
+        </div>
+        <div class="seg" id="setRegimen"></div>
+        <div class="note set-note" id="regimenNote">Mirrors the two PowerChart plans. <b>Correction only</b> = the "U-10 Dilute — Correction Only" plan: no insulin:carb ratio, no mealtime carbohydrate coverage. Selecting it removes the ratio entirely (absent, not blank).</div>
+      </div>
+
+      <div class="set-group" id="icGroup">
         <div class="set-head">
           <label for="setIc">Insulin : carb ratio</label>
           <button type="button" class="info-tap" data-note="icNote" aria-label="Insulin:carb ratio details" aria-expanded="false"><svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><circle cx="10" cy="10" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="6.4" r="1.1" fill="currentColor"/><rect x="9.1" y="8.7" width="1.8" height="6" rx="0.9" fill="currentColor"/></svg></button>
@@ -659,6 +668,12 @@ const Engine = (() => {
   function validateParameter(field, raw, conc, ageBandKey){
     const C = CDS_CONFIG.concentrations[conc];
     const num = parseFloat(raw);
+    // U-10 "correction-only" regimen: ICR ABSENT is valid (the plan carries no carb
+    // coverage). Absent, not blank — do NOT coerce a default. U-100 still requires ICR.
+    if(field === "ic" && conc === "U10" && (raw === "" || raw == null)){
+      return { ok:true, value:null, empty:false, correctionOnly:true,
+               corrected:false, advisory:null, message:null, range:C.ic, entered:null };
+    }
     if(raw === "" || raw == null || isNaN(num)){
       return { ok:false, empty:true, value:null, message:"Enter a value." };
     }
@@ -711,9 +726,16 @@ const Engine = (() => {
       totalUnrounded:0, totalRounded:null,
       carbCapApplied:false, bgCapApplied:false, correctionFloored:false,
       targetOffTier:false, targetBand:null, targetDir:null,
+      correctionOnly:false, regimen:"carb+correction",
       advisories:[], rescue:null,
       params:{ ic:params.ic, cf:params.cf, target:params.target, increment:params.increment }
     };
+
+    // Correction-only regimen: U-10 with ICR ABSENT. No prandial term, no division
+    // by ICR (which would be null → NaN/Infinity). U-100 can never enter this path.
+    const correctionOnly = params.conc === "U10" && (params.ic == null || params.ic === "");
+    res.correctionOnly = correctionOnly;
+    res.regimen = correctionOnly ? "correction-only" : "carb+correction";
 
     // --- BG guards first (most severe wins) ---
     if(bg != null){
@@ -746,7 +768,7 @@ const Engine = (() => {
     // Computed as soon as carbs is present (even before BG is entered) so the
     // prandial preview under the field reads correctly. The full dose still
     // requires both inputs (the INCOMPLETE return just below).
-    if(carbs != null){
+    if(carbs != null && !correctionOnly){
       let carbsUsed = carbs;
       if(carbs > C.carb.formulaCap){
         carbsUsed = C.carb.formulaCap; res.carbCapApplied = true;
@@ -757,8 +779,9 @@ const Engine = (() => {
       res.prandial = round2(carbsUsed / params.ic);
     }
 
-    // need both inputs to produce a full dose
-    if(carbs == null || bg == null){ res.state = "INCOMPLETE"; return res; }
+    // need both inputs to produce a full dose — except correction-only, where carbs
+    // are irrelevant (no coverage) so only BG is required.
+    if((carbs == null && !correctionOnly) || bg == null){ res.state = "INCOMPLETE"; return res; }
 
     // --- BG cap (correction only) ---
     let bgForCorr = bg;
@@ -795,11 +818,13 @@ const Engine = (() => {
     res.state = "DOSE";
 
     // informational notes
-    if(carbs === 0){
+    if(carbs === 0 && !correctionOnly){
       res.advisories.push({ type:"info", text:"Zero carbohydrates entered — dose covers correction only." });
     }
     if(res.correctionFloored && bg > 0){
-      res.advisories.push({ type:"info", text:`BG at or below target (${params.target} mg/dL) — no correction component. Prandial dose only.` });
+      res.advisories.push({ type:"info", text: correctionOnly
+        ? `BG at or below target (${params.target} mg/dL) — no correction component.`
+        : `BG at or below target (${params.target} mg/dL) — no correction component. Prandial dose only.` });
     }
     return res;
   }
@@ -935,8 +960,11 @@ const UI = (() => {
     $("barSub").style.color = isDilute ? "#E2B45A" : "";
     $("barSub").style.fontWeight = isDilute ? "800" : "";
     const rows = [
-      { key:"ic", name:"Insulin : carb ratio", desc:`1 ${C.unitShort.replace(/s$/,'')} covers ${fmt(params.ic)} g carbohydrate`,
-        num:`${fmt(params.ic)}`, uom:`g/${C.unit==='Units'?'Unit':'Syr Unit'}` },
+      correctionOnlyMode()
+        ? { key:"ic", name:"Insulin : carb ratio", desc:`Correction only — no mealtime carbohydrate coverage`,
+            num:`—`, uom:`` }
+        : { key:"ic", name:"Insulin : carb ratio", desc:`1 ${C.unitShort.replace(/s$/,'')} covers ${fmt(params.ic)} g carbohydrate`,
+            num:`${fmt(params.ic)}`, uom:`g/${C.unit==='Units'?'Unit':'Syr Unit'}` },
       { key:"cf", name:"Correction factor", desc:`1 ${C.unitShort.replace(/s$/,'')} lowers BG by ${fmt(params.cf)} mg/dL`,
         num:`${fmt(params.cf)}`, uom:`mg/dL` },
       { key:"target", name:"Target blood glucose", desc:`Correction applies only above target`,
@@ -966,8 +994,18 @@ const UI = (() => {
     }).join("");
 
     $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
+    applyEntryVisibility();   // correction-only collects BG only — no carb field
     invalidateDose();   // a parameter change requires a fresh, intentional calculation
     renderSubcalcs();   // refresh committed previews under the new parameters
+  }
+
+  // Correction-only orders carry no carbohydrate coverage, so the carb entry is
+  // removed entirely (not just ignored). BG alone drives the dose.
+  function applyEntryVisibility(){
+    const co = correctionOnlyMode();
+    const row = $("carbRow");
+    if(row) row.style.display = co ? "none" : "";
+    if(co) $("inCarbs").value = "";
   }
 
   /* ---- order-entry display badges (auto) ----
@@ -982,6 +1020,7 @@ const UI = (() => {
     const C = CDS_CONFIG.concentrations[params.conc];
     const band = params.ageBand;
     if(key === "ic"){
+      if(params.ic == null) return { state:"ok", aria:"Correction only — no carb coverage" };
       const r = C.ic, sl = r.softLowByAge && r.softLowByAge[band];
       if(sl != null && params.ic < sl)
         return { state:"caution", aria:"Caution — verify",
@@ -1017,16 +1056,27 @@ const UI = (() => {
   // Builds the medication order sig dynamically from the live order parameters.
   function orderSig(C){
     const roundPhrase = C.rounding.fixed ? "1 Syringe Unit" : `${fmt(params.increment)} unit`;
+    if(correctionOnlyMode()){
+      // Non-carb-counting orders are scheduled Q4H (not by feed/meal). This line
+      // mirrors the actual clinical order display — no calculator editorializing.
+      return `1 dose subcutaneously Q4H, `
+           + `Corr factor: ${fmt(params.cf)}, Target BG: ${fmt(params.target)}, `
+           + `Round to nearest ${roundPhrase}, Calculate dose to correct BG.`;
+    }
     return `1 dose subcutaneously ${C.schedule}, Insulin/carb ratio 1:${fmt(params.ic)}, `
          + `Corr factor: ${fmt(params.cf)}, Target BG: ${fmt(params.target)}, `
          + `Round to nearest ${roundPhrase}, Calculate dose to correct BG and cover carbs.`;
   }
   function renderMeal(){
     const C = CDS_CONFIG.concentrations[params.conc];
+    const co = correctionOnlyMode();
     const m = MEALS.find(x => x.key === mealKey);   // default cue kept (icon only; ignored art)
-    $("mealIcon").innerHTML = m
-      ? `<img src="${m.icon}" alt="">`
-      : `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
+    // Correction-only is Q4H (clock), not a feed/meal. clock_216.png lives in the repo dir.
+    $("mealIcon").innerHTML = co
+      ? `<img src="clock_216.png" alt="">`
+      : m
+        ? `<img src="${m.icon}" alt="">`
+        : `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
     // card now shows the live medication order, not a meal picker
     $("mealLabel").textContent = C.orderName;
     $("mealSub").textContent = orderSig(C);
@@ -1049,8 +1099,13 @@ const UI = (() => {
 
   /* ---- recompute (gate) + sub-calc previews (commit on blur) ---- */
   let doseShown = false;
+  // Correction-only regimen = U-10 with ICR absent (the sim mirror of the
+  // "U-10 Dilute — Correction Only" PowerPlan). Carbs are not collected.
+  function correctionOnlyMode(){ return params.conc === "U10" && params.ic == null; }
   function bothEntered(){
-    return $("inCarbs").value.trim() !== "" && $("inBg").value.trim() !== "";
+    const bgOk = $("inBg").value.trim() !== "";
+    if(correctionOnlyMode()) return bgOk;                 // carbs irrelevant — BG alone gates
+    return $("inCarbs").value.trim() !== "" && bgOk;
   }
   function computeCurrent(){
     const inputs = { carbs:$("inCarbs").value.trim(), bg:$("inBg").value.trim(),
@@ -1067,7 +1122,7 @@ const UI = (() => {
     const C = CDS_CONFIG.concentrations[params.conc];
     const u = C.unit==='Units' ? 'units' : 'Syr Unit';
     const holding = r.targetOffTier && !targetAck;   // reconcile prompt up — hold the math
-    $("carbSub").innerHTML = (!holding && r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
+    $("carbSub").innerHTML = (!correctionOnlyMode() && !holding && r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
       ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${u}</b>`
       : "";
     $("bgSub").innerHTML = (r.bgEntered != null && r.state === "DOSE")
@@ -1148,7 +1203,9 @@ const UI = (() => {
         <div class="dose-product">${C.product}</div>
         <div class="dose-readout"><span class="dose-number" style="color:var(--ink-faint)">—</span>
           <span class="dose-unit">${C.unit}</span></div>
-        <div class="dose-formula">Enter carbohydrates eaten and current blood glucose to calculate.</div>`;
+        <div class="dose-formula">${correctionOnlyMode()
+          ? "Enter current blood glucose to calculate (correction only — no carbohydrate coverage)."
+          : "Enter carbohydrates eaten and current blood glucose to calculate."}</div>`;
       return;
     }
     // DOSE
@@ -1156,10 +1213,14 @@ const UI = (() => {
     head.textContent = "Recommended dose";
     const bump = r.totalRounded !== r.totalUnrounded;
     const incUnit = C.unit==='Units' ? 'unit' : 'Syr Unit';
-    const components = r.correctionHeld
-      ? `${fmt(r.prandial)} (carb) · correction held`
-      : `${fmt(r.prandial)} (carb) + ${fmt(r.correction)} (correction)`;
+    const co = r.correctionOnly;
+    const components = co
+      ? `${fmt(r.correction)} (correction) · no carb coverage`
+      : r.correctionHeld
+        ? `${fmt(r.prandial)} (carb) · correction held`
+        : `${fmt(r.prandial)} (carb) + ${fmt(r.correction)} (correction)`;
     body.innerHTML = `
+      ${co ? `<div class="dose-co-badge" style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding:6px 10px;border-radius:8px;background:#FBEADD;border:1px solid #D55E00;color:#8A3D00;font-weight:700;font-size:13px;letter-spacing:.02em">CORRECTION ONLY — no carb coverage</div>` : ``}
       <div class="dose-product">${C.product}</div>
       <div class="dose-readout">
         <span class="dose-number">${fmt(r.totalRounded)}</span>
@@ -1201,7 +1262,7 @@ const UI = (() => {
   function openSheet(){
     const s = $("setConc"); s.value = params.conc;
     syncConcDependent();
-    $("setIc").value = params.ic;
+    $("setIc").value = params.ic == null ? "" : params.ic;
     $("setCf").value = params.cf;
     $("setTarget").value = params.target;
     $("setWebhook").value = params.webhook || "";
@@ -1226,8 +1287,30 @@ const UI = (() => {
     // U-10 has a single band; hide selector but keep it valid
     $("ageGroup").style.display = (Object.keys(C.targetBands).length > 1) ? "" : "none";
     if(Object.keys(C.targetBands).length === 1) ageSel.value = Object.keys(C.targetBands)[0];
+    // U-10 order type (the two-PowerPlan mirror). U-100 has no correction-only sibling.
+    const isU10 = conc === "U10";
+    $("regimenGroup").style.display = isU10 ? "" : "none";
+    $("setRegimen").dataset.val =
+      (isU10 && conc === params.conc && params.ic == null) ? "co" : "full";
+    renderRegimenSeg();
+    applyRegimenUI();
     renderRoundSeg();
     refreshSetNotes();
+  }
+
+  // Two-state regimen selector for U-10: "Carb + correction" (ratio present) vs
+  // "Correction only" (ratio absent). Mirrors selecting one of two PowerPlans.
+  function renderRegimenSeg(){
+    const host = $("setRegimen"); const val = host.dataset.val || "full";
+    const opts = [["full","Carb + correction"],["co","Correction only"]];
+    host.innerHTML = opts.map(([v,l]) =>
+      `<button type="button" data-reg="${v}" aria-pressed="${v===val}">${l}</button>`).join("");
+  }
+  // Correction-only removes the insulin:carb ratio field entirely (absent, not blank).
+  function applyRegimenUI(){
+    const co = $("setConc").value === "U10" && $("setRegimen").dataset.val === "co";
+    $("icGroup").style.display = co ? "none" : "";
+    if(co) clearOne("icMsg");
   }
 
   function renderRoundSeg(){
@@ -1545,14 +1628,27 @@ const UI = (() => {
     const conc = $("setConc").value;
     const ageBand = ($("setAge").value) || Object.keys(CDS_CONFIG.concentrations[conc].targetBands)[0];
     const inc = parseFloat($("setRound").dataset.val);
+    // Order type (U-10 only). Correction-only = the ratio is absent by plan selection.
+    const correctionOnly = (conc === "U10" && $("setRegimen").dataset.val === "co");
 
     // Each call snaps to boundary and shows its own message if needed.
-    const vIc = validateField("ic", "setIc", "icMsg", true);
     const vCf = validateField("cf", "setCf", "cfMsg", true);
     const vTg = validateField("target", "setTarget", "targetMsg", true);
 
     let blocked = false;
-    [[vIc,"icMsg"],[vCf,"cfMsg"],[vTg,"targetMsg"]].forEach(([v,msgId]) => {
+    let vIc;
+    if(correctionOnly){
+      clearOne("icMsg");
+      vIc = { value:null };                      // ratio absent, not blank — do not validate or default
+    } else {
+      vIc = validateField("ic", "setIc", "icMsg", true);
+      // ICR is required outside correction-only. (U-10 blank validates as valid-absent,
+      // so guard value==null too, not just .empty.)
+      if(vIc.empty || vIc.value == null){
+        showSetMsg("icMsg","error","Enter a value."); blocked = true;
+      }
+    }
+    [[vCf,"cfMsg"],[vTg,"targetMsg"]].forEach(([v,msgId]) => {
       if(v.empty){ showSetMsg(msgId,"error","Enter a value."); blocked = true; }
     });
     if(blocked) return;
@@ -1665,7 +1761,7 @@ const UI = (() => {
       $("inCarbs").value=""; $("inBg").value=""; $("inIOB").checked=false;
       setHint("carbHint",""); setHint("bgHint","");
       $("carbSub").innerHTML=""; $("bgSub").innerHTML="";
-      invalidateDose(); $("inCarbs").focus();
+      invalidateDose(); (correctionOnlyMode() ? $("inBg") : $("inCarbs")).focus();
     });
     $("btnSettings").addEventListener("click", openSheet);
     $("btnInfo").addEventListener("click", openParameterGrid);
@@ -1694,6 +1790,18 @@ const UI = (() => {
       const b = e.target.closest("button[data-inc]"); if(!b || b.disabled) return;
       $("setRound").dataset.val = b.dataset.inc;
       [...$("setRound").children].forEach(x => x.setAttribute("aria-pressed", x===b ? "true":"false"));
+    });
+    $("setRegimen").addEventListener("click", e => {
+      const b = e.target.closest("button[data-reg]"); if(!b) return;
+      $("setRegimen").dataset.val = b.dataset.reg;
+      renderRegimenSeg(); applyRegimenUI();
+      // Returning to carb+correction with no ratio present: restore the band default
+      // ratio so the now-required field isn't empty (CF/Target left as the RN set them).
+      if(b.dataset.reg === "full" && $("setIc").value.trim() === ""){
+        const bd = (CDS_CONFIG.concentrations[$("setConc").value].targetBands || {})[$("setAge").value || "infant"];
+        if(bd && bd.def && bd.def.ic != null) $("setIc").value = bd.def.ic;
+      }
+      renderGauge("ic");
     });
 
     // If launched with SMART params, surface it (no auto-auth in this build).

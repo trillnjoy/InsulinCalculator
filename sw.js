@@ -22,8 +22,8 @@
  *  · Non-GET / cross-origin (e.g. the optional result webhook) -> passthrough.
  * ===========================================================================*/
 
-const VERSION = "v1.9.1";          // cache key — bump every deploy (monotonic)
-const RELEASE = "1.9";             // committee-facing label shown in the footer
+const VERSION = "v1.10.0";         // cache key — bump every deploy (monotonic)
+const RELEASE = "1.10";            // committee-facing label shown in the footer
 const CACHE = `insulin-calc-${VERSION}`;
 
 // App shell — fully self-contained, no external assets.
@@ -39,7 +39,8 @@ const PRECACHE = [
   "./Dinner_216.png",
   "./Snack_216.png",
   "./Bedtime_216.png",
-  "./Formula_216.png"
+  "./Formula_216.png",
+  "./clock_216.png"
 ];
 
 self.addEventListener("install", event => {
