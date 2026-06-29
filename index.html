@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.10.0 (release 1.10) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.10.1 (release 1.10) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -149,6 +149,14 @@ body{
 
 /* ---------- Meal picker grid ---------- */
 .meal-help{font-size:12.5px;color:var(--ink-soft);line-height:1.45;margin:0 0 16px}
+/* ---------- Info chooser (help + ranges grid) ---------- */
+.info-doc{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;
+  padding:14px 16px;margin:0 0 10px;border:1px solid var(--line);border-radius:12px;
+  background:var(--paper);cursor:pointer;transition:border-color .15s,background .15s}
+.info-doc:hover{border-color:var(--teal)}
+.info-doc:active{background:var(--teal-wash)}
+.info-doc .info-doc-title{font-weight:700;font-size:15px;color:var(--ink)}
+.info-doc .info-doc-sub{font-size:12.5px;color:var(--ink-soft);line-height:1.4}
 .meal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .meal-opt{
   appearance:none;cursor:pointer;background:var(--card);border:1.5px solid var(--line-strong);
@@ -370,7 +378,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
     <button class="iconbtn" id="btnSettings" title="Order parameters" aria-label="Order parameters">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
-    <button class="iconbtn" id="btnInfo" type="button" title="Parameter grid" aria-label="Parameter grid reference">
+    <button class="iconbtn" id="btnInfo" type="button" title="Help & references" aria-label="Help and references">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
     </button>
   </div>
@@ -578,6 +586,30 @@ select.set-input{font-family:var(--sans);font-weight:500}
     <div class="sheet-body">
       <p class="meal-help">Choose the meal, snack, or bedtime order you are dosing. The icon appears top-left as a cue that the right order was selected. Changing the order requires re-confirming the order details below.</p>
       <div class="meal-grid" id="mealGrid"></div>
+    </div>
+    <div style="height:8px"></div>
+  </div>
+</div>
+
+<div class="scrim" id="infoScrim">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Help and references">
+    <div class="sheet-head">
+      <h2>Help &amp; references</h2>
+      <div class="spacer"></div>
+      <button class="iconbtn" id="btnCloseInfo" style="background:var(--paper);border-color:var(--line);color:var(--ink-soft)" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body">
+      <p class="meal-help">Open the CHLA calculator help for the active concentration, or the parameter ranges grid.</p>
+      <button class="info-doc" id="btnHelpPdf" type="button">
+        <span class="info-doc-title" id="infoHelpLabel">Calculator Help</span>
+        <span class="info-doc-sub">Official CHLA nurse-facing help document (PDF)</span>
+      </button>
+      <button class="info-doc" id="btnGridPdf" type="button">
+        <span class="info-doc-title">Parameter Ranges Grid</span>
+        <span class="info-doc-sub">Order-parameter limits &amp; order-distribution grid (PDF)</span>
+      </button>
     </div>
     <div style="height:8px"></div>
   </div>
@@ -1683,34 +1715,45 @@ const UI = (() => {
       <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags order-vs-calculator gaps that need RN verification with a caution sign (yellow yield) — an aggressive or high I:C, a low or &gt;150 correction factor, or a target BG outside the age-tiered band. A target outside the band additionally holds the dose for reconcile-and-proceed once the prescriber verifies intent.`;
   }
 
-  /* ---------------- Parameter grid (native share) ----------------
+  /* ---------------- Help & references (native share) ----------------
      iOS standalone PWAs trap target="_blank" PDF links in an in-app viewer with
      no way back. Instead we hand the PDF to the native share sheet so the user
      chooses how to view it (Files, Books, Safari, …) and returns to the app.
-     The File is preloaded so the click handler can call navigator.share
+     Files are preloaded so the click handler can call navigator.share
      synchronously — sharing files requires the user gesture, and an await mid-
      handler can void it on Safari. Desktop browsers without file-share fall back
-     to opening the PDF in a new tab (no modal trap there). */
-  const PDF_URL = "Insulin_Calc_Parameter_Ranges.pdf";
-  let pdfFile = null;
-  async function preloadParameterGrid(){
+     to opening the PDF in a new tab (no modal trap there).
+     The info icon opens a chooser: the concentration-specific CHLA help doc and
+     the parameter ranges grid. */
+  const PDF_GRID = "Insulin_Calc_Parameter_Ranges.pdf";
+  const HELP_PDFS = { U100:"INSULIN_CALC_HELP_CHLA.pdf", U10:"DILUTE_INSULIN_CALC_HELP_CHLA.pdf" };
+  const pdfFiles = {};                  // url -> preloaded File (for native share)
+  async function preloadPdf(url){
     try{
-      const res = await fetch(PDF_URL);
-      if(res.ok){
-        const blob = await res.blob();
-        pdfFile = new File([blob], PDF_URL, { type:"application/pdf" });
-      }
+      const res = await fetch(url);
+      if(res.ok){ pdfFiles[url] = new File([await res.blob()], url, { type:"application/pdf" }); }
     }catch(e){ /* offline before cache or missing — fallback handles it */ }
   }
-  function openParameterGrid(){
-    if(pdfFile && navigator.canShare && navigator.canShare({ files:[pdfFile] })){
-      navigator.share({ files:[pdfFile], title:"Insulin Calculator — Parameter Grid (Ranges)" })
-        .catch(err => { if(!err || err.name !== "AbortError") fallbackOpenPdf(); });
+  // kept name: called once at init. Preloads all reference PDFs.
+  async function preloadParameterGrid(){
+    await Promise.allSettled([preloadPdf(PDF_GRID), preloadPdf(HELP_PDFS.U100), preloadPdf(HELP_PDFS.U10)]);
+  }
+  function helpPdfUrl(){ return HELP_PDFS[params.conc] || HELP_PDFS.U100; }
+  function sharePdf(url, title){
+    const f = pdfFiles[url];
+    if(f && navigator.canShare && navigator.canShare({ files:[f] })){
+      navigator.share({ files:[f], title })
+        .catch(err => { if(!err || err.name !== "AbortError") window.open(url, "_blank", "noopener"); });
       return;
     }
-    fallbackOpenPdf();
+    window.open(url, "_blank", "noopener");
   }
-  function fallbackOpenPdf(){ window.open(PDF_URL, "_blank", "noopener"); }
+  function openInfoSheet(){
+    $("infoHelpLabel").textContent = (params.conc === "U10")
+      ? "Dilute U-10 Calculator Help" : "Standard U-100 Calculator Help";
+    $("infoScrim").classList.add("open");
+  }
+  function closeInfoSheet(){ $("infoScrim").classList.remove("open"); }
 
   /* ---------------- wire up ---------------- */
   function init(){
@@ -1764,7 +1807,18 @@ const UI = (() => {
       invalidateDose(); (correctionOnlyMode() ? $("inBg") : $("inCarbs")).focus();
     });
     $("btnSettings").addEventListener("click", openSheet);
-    $("btnInfo").addEventListener("click", openParameterGrid);
+    $("btnInfo").addEventListener("click", openInfoSheet);
+    $("btnCloseInfo").addEventListener("click", closeInfoSheet);
+    $("infoScrim").addEventListener("click", e => { if(e.target === $("infoScrim")) closeInfoSheet(); });
+    $("btnHelpPdf").addEventListener("click", () => {
+      const label = (params.conc === "U10") ? "Dilute U-10" : "Standard U-100";
+      sharePdf(helpPdfUrl(), `${label} Insulin Calculator — Help`);
+      closeInfoSheet();
+    });
+    $("btnGridPdf").addEventListener("click", () => {
+      sharePdf(PDF_GRID, "Insulin Calculator — Parameter Grid (Ranges)");
+      closeInfoSheet();
+    });
     preloadParameterGrid();
     $("btnCloseSheet").addEventListener("click", closeSheet);
     $("btnCancel").addEventListener("click", closeSheet);
@@ -1775,7 +1829,7 @@ const UI = (() => {
       b.setAttribute("aria-expanded", open ? "true" : "false");
     }));
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
-    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeSheet(); closeMealSheet(); } });
+    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeSheet(); closeMealSheet(); closeInfoSheet(); } });
 
     $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
     $("setAge").addEventListener("change", () => { applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
