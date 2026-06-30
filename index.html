@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.10.1 (release 1.10) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.10.2 (release 1.10) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -652,9 +652,9 @@ const CDS_CONFIG = {
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
       targetOrder:{ min:120, max:300 },   // order-entry trap: harmonized across all ages
       targetBands:{
-        lt5:  { label:"< 5 years",  min:130, max:300, def:{ ic:30, cf:150, target:150, increment:0.5 } },
-        a5_11:{ label:"5–11 years", min:120, max:250, def:{ ic:20, cf:100, target:130, increment:0.5 } },
-        gte12:{ label:"≥ 12 years", min:120, max:250, def:{ ic:5,  cf:25,  target:130, increment:0.5 } }
+        lt5:  { label:"0–5 years",  min:130, max:300, def:{ ic:30, cf:150, target:150, increment:0.5 } },
+        a5_11:{ label:"6–11 years", min:120, max:250, def:{ ic:15, cf:50,  target:130, increment:0.5 } },
+        gte12:{ label:"12+ years",  min:120, max:250, def:{ ic:5,  cf:25,  target:130, increment:0.5 } }
       },
       rounding:{ options:[0.5,1], def:0.5, fixed:false }
     },
@@ -1375,18 +1375,20 @@ const UI = (() => {
   // Detente data from the 3-yr order viz. Values are a starting point — verify before clinical sign-off.
   const DIST = {
     U100:{
+      // Distributions from corrected Tableau extract (age anchored to order date, not report date).
+      // Order-weighted; p=[P5,P10,P25,P50,P75,P90,P95]; modes=[value, order-share%]. N(orders): 0-5y=278 6-11y=941 12y+=2344.
       ic:{ axis:[0,100], band:{
-        lt5:{def:30, p:[15,15,30,35,50,60,80], median:35, modes:[[15,5.6],[20,10.6],[30,19.7],[40,12.0],[45,7.7],[50,12.0],[60,9.2]]},
-        a5_11:{def:20, p:[4.3,6,12,20,25,40,50], median:20, modes:[[10,8.8],[12,10.3],[15,11.6],[25,7.0],[30,13.1],[40,5.1]]},
-        gte12:{def:5, p:[2.5,4,5,7,10,15,35], median:7, modes:[[4,10.4],[5,17.8],[6,12.3],[8,10.7],[10,13.7],[12,6.8],[15,5.8]]} } },
+        lt5:{def:30, p:[9.2,10.9,19.1,31.6,43.7,53.8,59.8], median:31.6, modes:[[10,8.6],[15,5.8],[20,9.7],[30,14.4],[35,8.6],[40,11.9],[45,6.8],[50,11.9]]},
+        a5_11:{def:15, p:[5.2,6.1,9.1,12.7,20.1,27.9,33.8], median:12.7, modes:[[5,6.5],[6,5.0],[8,8.5],[10,14.6],[12,10.7],[15,13.9],[20,11.9],[30,8.5]]},
+        gte12:{def:5, p:[3.5,3.9,4.9,6.6,9.5,12.3,14.9], median:6.6, modes:[[4,11.8],[5,19.2],[6,12.6],[7,13.2],[8,10.3],[10,11.3],[12,6.2],[15,4.5]]} } },
       cf:{ axis:[0,300], band:{
-        lt5:{def:150, p:[40,50,100,160,200,295,300], median:160, modes:[[50,7.7],[60,9.9],[100,6.3],[120,4.9],[150,14.8],[180,7.7],[200,33.1],[300,5.6]]},
-        a5_11:{def:100, p:[11.5,25,50,80,100,200,200], median:80, modes:[[50,18.1],[60,4.0],[75,5.5],[100,23.7],[150,7.0],[200,7.4]]},
-        gte12:{def:25, p:[10,15,25,30,50,100,120], median:30, modes:[[15,5.0],[20,4.6],[25,22.6],[35,5.4],[40,6.7],[50,21.0],[100,5.3]]} } },
+        lt5:{def:150, p:[47.6,55,100,151.3,194.2,252.4,280.2], median:151.3, modes:[[50,9.7],[60,5.0],[100,11.9],[120,6.8],[130,4.3],[150,12.9],[180,5.4],[200,33.1]]},
+        a5_11:{def:50, p:[22.7,28.4,44.3,59.1,94.6,116.8,147.3], median:59.1, modes:[[25,4.6],[30,5.5],[40,4.8],[50,21.0],[60,6.1],[75,6.8],[100,20.0]]},
+        gte12:{def:25, p:[13.3,15.6,24.5,30.2,49.4,54.2,91.7], median:30.2, modes:[[15,5.8],[20,4.4],[25,25.2],[30,11.1],[35,4.8],[40,6.6],[50,20.3],[100,4.4]]} } },
       target:{ axis:[100,300], band:{
-        lt5:{def:150, p:[130,130,150,150,200,200,200], median:150, modes:[[130,16],[180,12],[200,41]]},
-        a5_11:{def:130, p:[110,120,130,130,150,200,200], median:130, modes:[[120,32],[150,245],[180,36],[200,76]]},
-        gte12:{def:130, p:[110,120,130,130,150,150,180], median:130, modes:[[120,165],[150,1036]]} } }
+        lt5:{def:150, p:[124,131,142,164,193,200,200], median:164, modes:[[130,11.5],[150,41.4],[180,8.6],[200,34.2]]},
+        a5_11:{def:130, p:[123,126,128,135,147,165,176], median:135, modes:[[120,5.2],[130,57.5],[150,29.2]]},
+        gte12:{def:130, p:[120,125,129,138,149,156,158], median:138, modes:[[120,5.9],[130,44.6],[150,40.8]]} } }
     },
     U10:{
       ic:{ axis:[0,40],  band:{ infant:{median:20} } },
@@ -1502,10 +1504,14 @@ const UI = (() => {
       seg(P[6],aMax,GPAL.orange,0.40); }
     const _md=(bd.modes||[]).map(m=>Array.isArray(m)?{at:m[0],w:m[1]}:{at:m,w:null});
     const _wx=Math.max(0,..._md.map(m=>m.w||0));
-    _md.forEach((m,i)=>{ if(m.at===bd.median) return;   // median shown by its own M marker
+    // Executive decision: a gauge that already carries mode bubbles (every U-100 band) does
+    // NOT show a median marker — the mode/default carries the readout. U-10 (no mode data,
+    // median only) keeps its marker so the gauge isn't bare.
+    const showMedian = bd.median!=null && _md.length===0;
+    _md.forEach((m,i)=>{ if(showMedian && m.at===bd.median) return;   // dedup only when the median marker is shown
       const r=(_wx>0 && m.w!=null) ? Math.max(3, 8.5*Math.sqrt(m.w/_wx)) : (i===0?5.5:4.5);
       cfg.detents.push({at:m.at,kind:"mode",r}); });
-    if(bd.median!=null) cfg.detents.push({at:bd.median,kind:"median"});
+    if(showMedian) cfg.detents.push({at:bd.median,kind:"median"});
     if(field!=="target"){               // focus+context on the clustered region (sparse soft-limit ticks stay in the tails)
       const pts=cfg.detents.map(o=>o.at);
       if(bd.p){ pts.push(bd.p[2],bd.p[4]); }
@@ -1582,7 +1588,6 @@ const UI = (() => {
     // the gauge ticks and in the layered parameter PDF. Clauses self-omit when the data is absent.
     const statLine = (med, common, lo, hi, units, modes) => {
       let s = "";
-      if(med != null) s += `Mode/Median: ${med}; `;
       if(common && common.length === 2) s += `Usual range: ${common[0]}–${common[1]}; `;
       s += `Allowed: ${lo}–${hi} ${units}.`;
       if(modes && modes.length > 1) s += " Blue dots mark frequent values.";
