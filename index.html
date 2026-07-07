@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.10.2 (release 1.10) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.11.0 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -647,14 +647,14 @@ const CDS_CONFIG = {
       orderName:"Humalog (insulin lispro 100 Units/mL)",
       schedule:"Meals and Bedtime",
       unit:"Units", unitShort:"units",
-      ic:{ min:1,   max:100, advisoryAtMax:100, softLowByAge:{ lt5:10, a5_11:4, gte12:2 } },
-      cf:{ min:4,   max:300, advisoryAbove:150, highWarn:200, softLowByAge:{ lt5:50, a5_11:15 } },
+      ic:{ min:1,   max:100 },
+      cf:{ min:4,   max:300 },
       carb:{ entryMin:0, entryMax:300, formulaCap:250 },
-      targetOrder:{ min:120, max:300 },   // order-entry trap: harmonized across all ages
+      targetOrder:{ min:100, max:250 },   // hard order-entry trap: 100–250 all ages (nested model)
       targetBands:{
-        lt5:  { label:"0–5 years",  min:130, max:300, def:{ ic:30, cf:150, target:150, increment:0.5 } },
-        a5_11:{ label:"6–11 years", min:120, max:250, def:{ ic:15, cf:50,  target:130, increment:0.5 } },
-        gte12:{ label:"12+ years",  min:120, max:250, def:{ ic:5,  cf:25,  target:130, increment:0.5 } }
+        lt5:  { label:"0–5 years",  min:100, max:250, def:{ ic:30, cf:150, target:150, increment:0.5 } },
+        a5_11:{ label:"6–11 years", min:100, max:250, def:{ ic:15, cf:50,  target:130, increment:0.5 } },
+        gte12:{ label:"12+ years",  min:100, max:250, def:{ ic:5,  cf:25,  target:130, increment:0.5 } }
       },
       rounding:{ options:[0.5,1], def:0.5, fixed:false }
     },
@@ -665,17 +665,52 @@ const CDS_CONFIG = {
       schedule:"Feeds",
       unit:"Syringe Units", unitShort:"syringe units",
       ic:{ min:1.5, max:40 },
-      cf:{ min:10,  max:200, advisoryAbove:null },
+      cf:{ min:10,  max:200 },
       carb:{ entryMin:0, entryMax:99, formulaCap:99 },
-      targetOrder:{ min:120, max:300 },   // single infant band — same at order entry and calculator
+      targetOrder:{ min:100, max:250 },   // Target BG is a shared field — same hard trap as U-100 (100–250)
       targetBands:{
-        infant:{ label:"≤ 12 months", min:130, max:300, def:{ ic:20, cf:25, target:150, increment:1 } }
+        infant:{ label:"≤ 12 months", min:100, max:250, def:{ ic:20, cf:25, target:150, increment:1 } }
       },
       rounding:{ options:[1], def:1, fixed:true }
     }
   },
   bg:{ entryMin:1, entryMax:2000, criticalHypo:0, hypoThreshold:70, formulaCap:600 }
 };
+
+/* ---- U-100 6-layer nested model (per param per age band) ----------------------
+   Nesting: min <= lowRule <= lowCDS <= [iqr] <= hiCDS <= hiRule <= max
+     hard (min/max)     : field limit — snap; cannot sign/enter out of range.
+     rule (low/hi)      : soft advisory (order sign + calculator inform), age-tiered.
+     CDS  (low/hi)      : passive "usual range" shown on the gauge; P10/90 Pareto-smoothed.
+     iqr                : snapped P25–P75, the densest inner band. Source: Parameters_Summary_2. */
+const NEST = {
+  ic: { min:1, max:100,
+    lt5:  { lowRule:8, lowCDS:10, hiCDS:50, hiRule:80, iqr:[20,45] },
+    a5_11:{ lowRule:4, lowCDS:5,  hiCDS:30, hiRule:75, iqr:[9,20] },
+    gte12:{ lowRule:2, lowCDS:4,  hiCDS:12, hiRule:35, iqr:[5,10] } },
+  cf: { min:4, max:300,
+    lt5:  { lowRule:40, lowCDS:50, hiCDS:200, hiRule:200, iqr:[100,200] },
+    a5_11:{ lowRule:15, lowCDS:25, hiCDS:100, hiRule:160, iqr:[45,100] },
+    gte12:{ lowRule:8,  lowCDS:15, hiCDS:50,  hiRule:120, iqr:[25,50] } },
+  target: { min:100, max:250,
+    lt5:  { lowRule:130, lowCDS:150, hiCDS:200, hiRule:250, iqr:[150,200] },
+    a5_11:{ lowRule:120, lowCDS:130, hiCDS:180, hiRule:200, iqr:[130,150] },
+    gte12:{ lowRule:120, lowCDS:120, hiCDS:150, hiRule:200, iqr:[130,150] } }
+};
+// nest lookup: only U-100 carries the tiered model; U-10 returns null (hard limits only).
+function nestFor(conc, field, band){
+  if(conc==="U10"){
+    // Target BG is concentration-independent — the field is shared with U-100 (same units,
+    // same value domain), so dilute's target inherits the U-100 0–5y nest. ICR/CF differ by
+    // concentration (Syringe Units) and carry no dilute nest yet.
+    if(field==="target"){ conc="U100"; band="lt5"; }
+    else return null;
+  }
+  if(conc!=="U100") return null;
+  const m = NEST[field]; if(!m) return null;
+  const b = m[band]; if(!b) return null;
+  return { min:m.min, max:m.max, lowRule:b.lowRule, lowCDS:b.lowCDS, hiCDS:b.hiCDS, hiRule:b.hiRule, iqr:b.iqr };
+}
 
 /* ============================ 2. Engine ================================= */
 /* Pure. Given parameters + nurse inputs, returns a structured result object. */
@@ -720,22 +755,20 @@ const Engine = (() => {
       message = `${name} ${round2(num)} is below the allowed minimum. Corrected to ${range.min}.`; }
     else if(num > range.max){ value = range.max; corrected = true;
       message = `${name} ${round2(num)} is above the allowed maximum. Corrected to ${range.max}.`; }
-    // soft advisory: U-100 CF high — graduated. >200 is a dedicated high warn
-    // (all ages); >150 is the lighter verify advisory.
-    if(field === "cf" && range.highWarn != null && value > range.highWarn){
-      advisory = `Correction factor above ${range.highWarn} mg/dL/unit (all ages) — high; a correction factor this large delivers very little insulin per point above target. Verify the sensitivity factor. Acknowledge to proceed.`;
-    } else if(field === "cf" && range.advisoryAbove != null && value > range.advisoryAbove && ageBandKey === "gte12"){
-      advisory = `Correction factor above ${range.advisoryAbove} mg/dL/unit (\u2265 12 y) — verify sensitivity factor (possible data-entry error). Acknowledge to proceed.`;
-    }
-    // soft advisory: U-100 I:C at/above the maximum (100) — flags sliding-scale-style orders
-    if(field === "ic" && range.advisoryAtMax != null && value >= range.advisoryAtMax){
-      advisory = `Insulin:carb ratio at ${range.advisoryAtMax} (the maximum) — verify an actual prandial plan; a ratio this high makes carb coverage negligible (sliding-scale–style order).`;
-    }
-    // soft advisory: U-100 age-specific LOW rule — fires at order sign, non-blocking.
-    if(advisory == null && range.softLowByAge && ageBandKey &&
-       range.softLowByAge[ageBandKey] != null && value < range.softLowByAge[ageBandKey]){
-      const thr = range.softLowByAge[ageBandKey];
-      advisory = `${name} ${round2(value)} is below the age-typical floor of ${thr} for this age band — verify (more insulin than usual for age). Acknowledge to proceed.`;
+    // soft advisory: age-tiered Low/Hi Rule (order sign + calculator inform), non-blocking.
+    // Same threshold fires here and on the gauge; CF-150 verify cue retired.
+    const N = (typeof nestFor === "function") ? nestFor(conc, field, ageBandKey) : null;
+    if(N && advisory == null && message == null){
+      if(value < N.lowRule){
+        advisory = `${name} ${round2(value)} is below the age soft-floor of ${N.lowRule} for this band — verify (more insulin than usual for age). Acknowledge to proceed.`;
+      } else if(value > N.hiRule){
+        if(field === "ic")
+          advisory = `Insulin:carb ratio ${round2(value)} is above the age soft-ceiling of ${N.hiRule} — a ratio this high makes carb coverage negligible (sliding-scale–style order). Verify. Acknowledge to proceed.`;
+        else if(field === "cf")
+          advisory = `Correction factor ${round2(value)} is above the age soft-ceiling of ${N.hiRule} mg/dL/unit — high; delivers very little insulin per point above target. Verify the sensitivity factor. Acknowledge to proceed.`;
+        else
+          advisory = `${name} ${round2(value)} is above the age soft-ceiling of ${N.hiRule} — verify prescriber intent. Acknowledge to proceed.`;
+      }
     }
     return { ok:true, value, corrected, advisory, message, range, entered:num };
   }
@@ -786,14 +819,16 @@ const Engine = (() => {
     }
 
     // --- Calculator-layer age check: target BG vs the age-tiered band ---
-    // Within the hard order stop (70–200) but outside the age tier is a *challenge*,
+    // Within the hard order stop but outside the age-tiered Rule band is a *challenge*,
     // not a block: pharmacy & RN challenge; if the prescriber verifies intent, the
     // dose must still be calculable. So we flag it and let computation proceed.
+    const _tn = (typeof nestFor === "function") ? nestFor(params.conc, "target", params.ageBand) : null;
     const tband = C.targetBands[params.ageBand] || Object.values(C.targetBands)[0];
-    if(tband && (params.target < tband.min || params.target > tband.max)){
+    const tLo = _tn ? _tn.lowRule : tband.min, tHi = _tn ? _tn.hiRule : tband.max;
+    if(params.target != null && (params.target < tLo || params.target > tHi)){
       res.targetOffTier = true;
-      res.targetBand = tband;
-      res.targetDir = params.target < tband.min ? "below" : "above";
+      res.targetBand = { label: tband.label, min: tLo, max: tHi };
+      res.targetDir = params.target < tLo ? "below" : "above";
     }
 
     // --- Carb cap + prandial ---
@@ -1041,44 +1076,24 @@ const UI = (() => {
   }
 
   /* ---- order-entry display badges (auto) ----
-     Caution (yellow yield) is driven entirely by the parameter grid, so a grid
-     update changes the thresholds with no code edit:
-       · I:C   < softLowByAge[band]   OR  >= advisoryAtMax
-       · CF    < softLowByAge[band]   OR  >  advisoryAbove
-       · Target outside targetBands[band] (below min or above max)
-     The off-tier target also drives the engine's reconcile-and-proceed dose hold
-     (independent of this badge). Everything else reads as a green check. */
+     Caution (yellow yield) fires from the nested model's age-tiered Rule band:
+       value < Low Rule  OR  value > Hi Rule  (per parameter, per age band).
+     Same thresholds drive the gauge L/H ticks and the order-sign advisory, so the
+     three surfaces never disagree. U-10 has no nested model yet → reads as a check. */
   function paramState(key){
-    const C = CDS_CONFIG.concentrations[params.conc];
-    const band = params.ageBand;
-    if(key === "ic"){
-      if(params.ic == null) return { state:"ok", aria:"Correction only — no carb coverage" };
-      const r = C.ic, sl = r.softLowByAge && r.softLowByAge[band];
-      if(sl != null && params.ic < sl)
+    const conc = params.conc, band = params.ageBand;
+    if(key === "ic" && params.ic == null)
+      return { state:"ok", aria:"Correction only — no carb coverage" };
+    const N = nestFor(conc, key, band), v = params[key];
+    if(N && v != null){
+      if(v < N.lowRule)
         return { state:"caution", aria:"Caution — verify",
-                 msg:`Below the ${sl} age soft-floor — verify (more insulin than usual for age).` };
-      if(r.advisoryAtMax != null && params.ic >= r.advisoryAtMax)
-        return { state:"caution", aria:"Caution — verify",
-                 msg:`At/above ${r.advisoryAtMax} — verify an actual prandial plan (sliding-scale-style order).` };
-    }
-    if(key === "cf"){
-      const r = C.cf, sl = r.softLowByAge && r.softLowByAge[band];
-      if(sl != null && params.cf < sl)
-        return { state:"caution", aria:"Caution — verify",
-                 msg:`Below the ${sl} age soft-floor — verify (more insulin than usual for age).` };
-      if(r.highWarn != null && params.cf > r.highWarn)
-        return { state:"caution", aria:"Caution — verify",
-                 msg:`Above ${r.highWarn} mg/dL (all ages) — high; verify the correction factor.` };
-      if(r.advisoryAbove != null && params.cf > r.advisoryAbove)
-        return { state:"caution", aria:"Caution — verify",
-                 msg:`Above ${r.advisoryAbove} mg/dL — verify correction factor against the order.` };
-    }
-    if(key === "target"){
-      const b = C.targetBands[band] || Object.values(C.targetBands)[0];
-      if(b && (params.target < b.min || params.target > b.max)){
-        const dir = params.target < b.min ? "Below" : "Above";
-        return { state:"caution", aria:"Caution — verify",
-                 msg:`${dir} the ${b.label} range (${b.min}–${b.max} mg/dL) — verify prescriber intent.` };
+                 msg:`Below the age soft-floor of ${N.lowRule} — verify (more insulin than usual for age).` };
+      if(v > N.hiRule){
+        const m = key === "ic" ? `Above the age soft-ceiling of ${N.hiRule} — verify a prandial plan (sliding-scale-style order).`
+                : key === "cf" ? `Above the age soft-ceiling of ${N.hiRule} mg/dL/unit — high; verify the correction factor.`
+                :                 `Above the age soft-ceiling of ${N.hiRule} — verify prescriber intent.`;
+        return { state:"caution", aria:"Caution — verify", msg:m };
       }
     }
     return { state:"ok", aria:"Within range" };
@@ -1385,7 +1400,7 @@ const UI = (() => {
         lt5:{def:150, p:[47.6,55,100,151.3,194.2,252.4,280.2], median:151.3, modes:[[50,9.7],[60,5.0],[100,11.9],[120,6.8],[130,4.3],[150,12.9],[180,5.4],[200,33.1]]},
         a5_11:{def:50, p:[22.7,28.4,44.3,59.1,94.6,116.8,147.3], median:59.1, modes:[[25,4.6],[30,5.5],[40,4.8],[50,21.0],[60,6.1],[75,6.8],[100,20.0]]},
         gte12:{def:25, p:[13.3,15.6,24.5,30.2,49.4,54.2,91.7], median:30.2, modes:[[15,5.8],[20,4.4],[25,25.2],[30,11.1],[35,4.8],[40,6.6],[50,20.3],[100,4.4]]} } },
-      target:{ axis:[100,300], band:{
+      target:{ axis:[100,250], band:{
         lt5:{def:150, p:[124,131,142,164,193,200,200], median:164, modes:[[130,11.5],[150,41.4],[180,8.6],[200,34.2]]},
         a5_11:{def:130, p:[123,126,128,135,147,165,176], median:135, modes:[[120,5.2],[130,57.5],[150,29.2]]},
         gte12:{def:130, p:[120,125,129,138,149,156,158], median:138, modes:[[120,5.9],[130,44.6],[150,40.8]]} } }
@@ -1393,7 +1408,7 @@ const UI = (() => {
     U10:{
       ic:{ axis:[0,40],  band:{ infant:{median:20} } },
       cf:{ axis:[0,200], band:{ infant:{median:25} } },
-      target:{ axis:[120,300], band:{ infant:{median:150} } }
+      target:{ axis:[100,250], band:{ infant:{median:150} } }
     }
   };
   const G_IDS  = { ic:["setIc","icMsg","icGauge"], cf:["setCf","cfMsg","cfGauge"], target:["setTarget","targetMsg","targetGauge"] };
@@ -1482,39 +1497,55 @@ const UI = (() => {
     const d=(DIST[conc]||{})[field]||{}, bd=(d.band||{})[band]||{};
     const raw=parseFloat($(G_IDS[field][0]).value);
     const cfg={ value:isNaN(raw)?null:raw, pzones:[], ticks:[], detents:[], aria:field+" range gauge" };
+    const N = nestFor(conc, field, band);
+
+    // axis + hard bounds
     if(field==="target"){
-      const order=C.targetOrder, ab=C.targetBands[band]||Object.values(C.targetBands)[0];
+      const order=C.targetOrder;
       cfg.axisMin=(d.axis&&d.axis[0])??order.min; cfg.axisMax=(d.axis&&d.axis[1])??order.max;
-      cfg.hardMin=order.min; cfg.hardMax=order.max;
-      if(order.min<ab.min) cfg.ticks.push({at:ab.min,k:"L",val:ab.min,color:GPAL.verm});
-      if(order.max>ab.max) cfg.ticks.push({at:ab.max,k:"H",val:ab.max,color:GPAL.verm});
+      cfg.hardMin=(N?N.min:order.min); cfg.hardMax=(N?N.max:order.max);
     } else {
       const r=C[field];
-      cfg.axisMin=Math.max(((d.axis&&d.axis[0])||0), r.min); cfg.axisMax=(d.axis&&d.axis[1])??r.max;
-      cfg.hardMin=r.min; cfg.hardMax=r.max;
-      const softLow=r.softLowByAge&&r.softLowByAge[band];
-      if(softLow!=null) cfg.ticks.push({at:softLow,k:"L",val:softLow,color:GPAL.verm});
-      if(field==="cf"&&r.advisoryAbove!=null&&band==="gte12") cfg.ticks.push({at:r.advisoryAbove,k:"H",val:r.advisoryAbove,color:GPAL.verm});
-      if(field==="cf"&&r.highWarn!=null) cfg.ticks.push({at:r.highWarn,k:"H",val:r.highWarn,color:GPAL.verm});
+      cfg.axisMin=Math.max(((d.axis&&d.axis[0])||0),(N?N.min:r.min)); cfg.axisMax=(d.axis&&d.axis[1])??(N?N.max:r.max);
+      cfg.hardMin=(N?N.min:r.min); cfg.hardMax=(N?N.max:r.max);
     }
-    if(bd.p && bd.p.length===7){ const P=bd.p, aMin=cfg.axisMin, aMax=cfg.axisMax;
+
+    if(N){
+      // age-tiered soft-rule markers (L at Low Rule, H at Hi Rule); CF-150 verify cue retired
+      if(N.lowRule>cfg.hardMin) cfg.ticks.push({at:N.lowRule,k:"L",val:N.lowRule,color:GPAL.verm});
+      if(N.hiRule<cfg.hardMax)  cfg.ticks.push({at:N.hiRule,k:"H",val:N.hiRule,color:GPAL.verm});
+      // nested regions, center-out: amber | lightest blue | usual (lighter) | IQR (darkest) | usual | lightest | amber
+      const seg=(a,b,col,op)=>{ if(b>a) cfg.pzones.push({from:a,to:b,col,op}); };
+      const iqLo=Math.max(N.lowCDS,N.iqr[0]), iqHi=Math.min(N.hiCDS,N.iqr[1]);
+      seg(cfg.hardMin, N.lowRule, GPAL.orange, 0.40);
+      seg(N.lowRule,   N.lowCDS,  GPAL.blue,   0.12);
+      seg(N.lowCDS,    iqLo,      GPAL.blue,   0.22);
+      seg(iqLo,        iqHi,      GPAL.blue,   0.42);
+      seg(iqHi,        N.hiCDS,   GPAL.blue,   0.22);
+      seg(N.hiCDS,     N.hiRule,  GPAL.blue,   0.12);
+      seg(N.hiRule,    cfg.hardMax,GPAL.orange, 0.40);
+    } else if(bd.p && bd.p.length===7){
+      // U-10 / no-nest fallback: percentile-based shading
+      const P=bd.p, aMin=cfg.axisMin, aMax=cfg.axisMax;
       const seg=(a,b,col,op)=>{ if(b>a) cfg.pzones.push({from:a,to:b,col,op}); };
       seg(aMin,P[0],GPAL.orange,0.40); seg(P[0],P[1],GPAL.blue,0.10); seg(P[1],P[2],GPAL.blue,0.20);
       seg(P[2],P[4],GPAL.blue,0.40); seg(P[4],P[5],GPAL.blue,0.20); seg(P[5],P[6],GPAL.blue,0.10);
-      seg(P[6],aMax,GPAL.orange,0.40); }
-    const _md=(bd.modes||[]).map(m=>Array.isArray(m)?{at:m[0],w:m[1]}:{at:m,w:null});
+      seg(P[6],aMax,GPAL.orange,0.40);
+    }
+
+    // mode-bubble detents — clip to the usual (CDS) range when a nest is present
+    const _md=(bd.modes||[]).map(m=>Array.isArray(m)?{at:m[0],w:m[1]}:{at:m,w:null})
+               .filter(m=> !N || (m.at>=N.lowCDS && m.at<=N.hiCDS));
     const _wx=Math.max(0,..._md.map(m=>m.w||0));
-    // Executive decision: a gauge that already carries mode bubbles (every U-100 band) does
-    // NOT show a median marker — the mode/default carries the readout. U-10 (no mode data,
-    // median only) keeps its marker so the gauge isn't bare.
-    const showMedian = bd.median!=null && _md.length===0;
-    _md.forEach((m,i)=>{ if(showMedian && m.at===bd.median) return;   // dedup only when the median marker is shown
+    const showMedian = bd.median!=null && !N;   // U-100 shows mode bubbles; U-10 keeps a median marker
+    _md.forEach((m,i)=>{
       const r=(_wx>0 && m.w!=null) ? Math.max(3, 8.5*Math.sqrt(m.w/_wx)) : (i===0?5.5:4.5);
       cfg.detents.push({at:m.at,kind:"mode",r}); });
     if(showMedian) cfg.detents.push({at:bd.median,kind:"median"});
-    if(field!=="target"){               // focus+context on the clustered region (sparse soft-limit ticks stay in the tails)
+
+    if(field!=="target"){               // focus+context on the clustered region (sparse rule ticks stay in the tails)
       const pts=cfg.detents.map(o=>o.at);
-      if(bd.p){ pts.push(bd.p[2],bd.p[4]); }
+      if(N){ pts.push(N.iqr[0],N.iqr[1]); } else if(bd.p){ pts.push(bd.p[2],bd.p[4]); }
       if(pts.length){ let lo=Math.min(...pts), hi=Math.max(...pts); const pv=(hi-lo)*0.12||0;
         lo=Math.max(cfg.axisMin,lo-pv); hi=Math.min(cfg.axisMax,hi+pv); if(hi>lo) cfg.focus=[lo,hi]; }
     }
@@ -1586,21 +1617,24 @@ const UI = (() => {
     // Standardized CDS stats line — identical structure for every field, band, and concentration.
     // Soft-limit (L/H) and verify/high-warn cues are intentionally NOT repeated here; they live on
     // the gauge ticks and in the layered parameter PDF. Clauses self-omit when the data is absent.
-    const statLine = (med, common, lo, hi, units, modes) => {
+    // Standardized CDS stats line — names the three tiers: usual (CDS), soft advisory (Rule),
+    // and the hard allowed range. Tier clauses self-omit for U-10 (no nested model yet).
+    const statLine = (nest, hardLo, hardHi, units, hasModes) => {
       let s = "";
-      if(common && common.length === 2) s += `Usual range: ${common[0]}–${common[1]}; `;
-      s += `Allowed: ${lo}–${hi} ${units}.`;
-      if(modes && modes.length > 1) s += " Blue dots mark frequent values.";
+      if(nest) s += `Usual ${nest.lowCDS}–${nest.hiCDS}; soft advisory beyond ${nest.lowRule}–${nest.hiRule}; `;
+      s += `${nest?"allowed":"Allowed"} ${hardLo}–${hardHi} ${units}.`;
+      if(hasModes) s += " Blue dots mark frequent values within the usual range.";
       return s;
     };
     const dIc = (D.ic && D.ic.band && D.ic.band[ab]) || {};
     const dCf = (D.cf && D.cf.band && D.cf.band[ab]) || {};
     const dTg = (D.target && D.target.band && D.target.band[ab]) || {};
     const band = C.targetBands[ab] || Object.values(C.targetBands)[0];
-    const iqr = p => (p && p.length===7) ? [p[2],p[4]] : null;
-    $("icNote").textContent     = statLine(dIc.median, iqr(dIc.p), C.ic.min, C.ic.max, `g per ${unitPhrase}`, dIc.modes);
-    $("cfNote").textContent     = statLine(dCf.median, iqr(dCf.p), C.cf.min, C.cf.max, `mg/dL per ${unitPhrase}`, dCf.modes);
-    $("targetNote").textContent = statLine(dTg.median, iqr(dTg.p)||[band.min, band.max], C.targetOrder.min, C.targetOrder.max, "mg/dL", dTg.modes);
+    const hasM = m => !!(m && m.length > 1);
+    const Nic=nestFor(conc,"ic",ab), Ncf=nestFor(conc,"cf",ab), Ntg=nestFor(conc,"target",ab);
+    $("icNote").textContent     = statLine(Nic, C.ic.min, C.ic.max, `g per ${unitPhrase}`, hasM(dIc.modes));
+    $("cfNote").textContent     = statLine(Ncf, C.cf.min, C.cf.max, `mg/dL per ${unitPhrase}`, hasM(dCf.modes));
+    $("targetNote").textContent = statLine(Ntg, C.targetOrder.min, C.targetOrder.max, "mg/dL", hasM(dTg.modes));
     renderAllGauges();
   }
 
