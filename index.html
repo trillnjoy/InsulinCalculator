@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.11.3 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.11.4 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -1872,6 +1872,20 @@ const UI = (() => {
   }
   function closeInfoSheet(){ $("infoScrim").classList.remove("open"); }
 
+  /* Document open strategy.
+     PRIMARY: window.open(url, "_blank") — a new browsing context, NOT a navigation. The PWA
+     keeps running underneath, and iOS hands the PDF to its native viewer (real multipage
+     scroll/zoom) with its own Done / "back to app" chrome. This is why the old approach
+     trapped us: it navigated the top-level window, which replaced the app — and its JS —
+     leaving nothing able to close the PDF.
+     Must be called SYNCHRONOUSLY inside the tap handler, or iOS suppresses it as a popup.
+     FALLBACK: if the popup is blocked (w is null), render in-app with pdf.js. */
+  function openDocument(url, title){
+    let w = null;
+    try{ w = window.open(url, "_blank"); }catch(_){ w = null; }
+    if(!w){ openPdf(url, title); }         // suppressed → keep it in-app rather than fail silently
+  }
+
   /* In-app PDF viewer (dismissible; keeps the PWA intact — no navigation, no share-sheet detour).
      iOS Safari renders only the FIRST page of a PDF placed in an iframe/embed, with no way to
      scroll. So the document is decoded with pdf.js and every page is rasterized into a scrollable
@@ -2002,11 +2016,11 @@ const UI = (() => {
     $("btnHelpPdf").addEventListener("click", () => {
       const label = (params.conc === "U10") ? "Dilute U-10" : "Standard U-100";
       closeInfoSheet();
-      openPdf(helpPdfUrl(), `${label} Insulin Calculator Help`);
+      openDocument(helpPdfUrl(), `${label} Insulin Calculator Help`);
     });
     $("btnGridPdf").addEventListener("click", () => {
       closeInfoSheet();
-      openPdf(PDF_GRID, "Parameter Ranges Grid");
+      openDocument(PDF_GRID, "Parameter Ranges Grid");
     });
     $("pdfvDone").addEventListener("click", closePdf);
     preloadParameterGrid();
