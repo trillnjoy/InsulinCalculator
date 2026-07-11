@@ -22,7 +22,7 @@
  *  · Non-GET / cross-origin (e.g. the optional result webhook) -> passthrough.
  * ===========================================================================*/
 
-const VERSION = "v1.11.4";         // cache key — bump every deploy (monotonic)
+const VERSION = "v1.11.6";         // cache key — bump every deploy (monotonic)
 const RELEASE = "1.11";            // committee-facing label shown in the footer
 const CACHE = `insulin-calc-${VERSION}`;
 
@@ -33,7 +33,6 @@ const PRECACHE = [
   "./manifest.webmanifest",
   "./insulin_calc_192.png",
   "./insulin_calc_512.png",
-  "./Insulin_Calc_Parameter_Ranges.pdf",
   "./Breakfast_216.png",
   "./Lunch_216.png",
   "./Dinner_216.png",
@@ -41,11 +40,9 @@ const PRECACHE = [
   "./Bedtime_216.png",
   "./Formula_216.png",
   "./clock_216.png",
-  "./INSULIN_CALC_HELP_CHLA.pdf",
-  "./DILUTE_INSULIN_CALC_HELP_CHLA.pdf",
-  // pdf.js — renders multi-page PDFs in-app (iOS iframes only ever show page 1).
-  "./pdf.min.mjs",
-  "./pdf.worker.min.mjs"
+  "./Parameter_Ranges.png",
+  "./Insulin_Calc_Help.png",
+  "./Dilute_Insulin_Calc_Help.png"
 ];
 
 self.addEventListener("install", event => {

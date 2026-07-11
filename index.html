@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.11.4 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.11.6 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -308,14 +308,19 @@ body{
   background:rgba(255,255,255,.18); color:#fff; font-size:16px; font-weight:700; cursor:pointer;
   -webkit-tap-highlight-color:transparent; }
 .pdfv-done:active{ background:rgba(255,255,255,.34); }
-.pdfv-frame{ flex:1 1 auto; width:100%; border:0; background:#fff; }
-/* Rendered pages: iOS Safari shows only page 1 of a PDF in an iframe, so multi-page
-   documents are rendered to canvas and stacked in a scrollable column instead. */
-.pdfv-pages{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch;
-  background:#2A3B45; padding:12px 10px 28px; display:flex; flex-direction:column; align-items:center; gap:12px; }
-.pdfv-pages canvas{ width:100%; max-width:900px; height:auto; display:block; background:#fff;
-  border-radius:3px; box-shadow:0 2px 10px rgba(0,0,0,.35); }
-.pdfv-msg{ color:#CBD8DE; font-size:13px; padding:22px 16px; text-align:center; line-height:1.5; }
+.pdfv-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.pdfv-zoom{flex:0 0 auto;min-height:40px;padding:8px 14px;border:0;border-radius:8px;
+  background:rgba(255,255,255,.12);color:#fff;font-size:14px;font-weight:600;cursor:pointer;
+  white-space:nowrap;-webkit-tap-highlight-color:transparent;}
+.pdfv-zoom:active{background:rgba(255,255,255,.3)}
+/* Document body: a single tall image. Fit-to-width by default; tapping Zoom (or double-tapping
+   the sheet) switches to natural size, where both scroll axes engage so dense tables stay legible. */
+.pdfv-doc{flex:1 1 auto; overflow:auto; -webkit-overflow-scrolling:touch;
+  background:#2A3B45; padding:12px 10px 28px; text-align:center;}
+.pdfv-img{display:inline-block; width:100%; max-width:900px; height:auto; background:#fff;
+  border-radius:3px; box-shadow:0 2px 10px rgba(0,0,0,.35); cursor:zoom-in;}
+.pdfv-doc.is-zoomed{text-align:left}
+.pdfv-doc.is-zoomed .pdfv-img{width:auto; max-width:none; cursor:zoom-out;}
 /* ---------- Modal ---------- */
 .scrim{
   position:fixed;inset:0;background:rgba(16,36,44,.42);backdrop-filter:blur(2px);
@@ -648,10 +653,14 @@ select.set-input{font-family:var(--sans);font-weight:500}
 <div id="pdfViewer" class="pdfv" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Document viewer">
   <div class="pdfv-bar">
     <span class="pdfv-title" id="pdfvTitle">Document</span>
-    <button type="button" class="pdfv-done" id="pdfvDone" aria-label="Close document">Done</button>
+    <span class="pdfv-actions">
+      <button type="button" class="pdfv-zoom" id="pdfvZoom" aria-label="Toggle zoom">Zoom in</button>
+      <button type="button" class="pdfv-done" id="pdfvDone" aria-label="Close document">Done</button>
+    </span>
   </div>
-  <div id="pdfvPages" class="pdfv-pages" tabindex="0"></div>
-  <iframe id="pdfvFrame" class="pdfv-frame" title="PDF document" hidden></iframe>
+  <div id="pdfvPages" class="pdfv-doc" tabindex="0">
+    <img id="pdfvImg" class="pdfv-img" alt="" draggable="false">
+  </div>
 </div>
 
 <script>
@@ -1832,39 +1841,19 @@ const UI = (() => {
       <br>· In a multi-order context (breakfast / lunch / dinner / snack / bedtime), the launched order selects the meal cue and populates the read-only details; the calculator flags order-vs-calculator gaps that need RN verification with a caution sign (yellow yield) — an aggressive or high I:C, a low or &gt;150 correction factor, or a target BG outside the age-tiered band. A target outside the band additionally holds the dose for reconcile-and-proceed once the prescriber verifies intent.`;
   }
 
-  /* ---------------- Help & references (native share) ----------------
-     iOS standalone PWAs trap target="_blank" PDF links in an in-app viewer with
-     no way back. Instead we hand the PDF to the native share sheet so the user
-     chooses how to view it (Files, Books, Safari, …) and returns to the app.
-     Files are preloaded so the click handler can call navigator.share
-     synchronously — sharing files requires the user gesture, and an await mid-
-     handler can void it on Safari. Desktop browsers without file-share fall back
-     to opening the PDF in a new tab (no modal trap there).
-     The info icon opens a chooser: the concentration-specific CHLA help doc and
-     the parameter ranges grid. */
-  const PDF_GRID = "Insulin_Calc_Parameter_Ranges.pdf";
-  const HELP_PDFS = { U100:"INSULIN_CALC_HELP_CHLA.pdf", U10:"DILUTE_INSULIN_CALC_HELP_CHLA.pdf" };
-  const pdfFiles = {};                  // url -> preloaded File (for native share)
-  async function preloadPdf(url){
-    try{
-      const res = await fetch(url);
-      if(res.ok){ pdfFiles[url] = new File([await res.blob()], url, { type:"application/pdf" }); }
-    }catch(e){ /* offline before cache or missing — fallback handles it */ }
+  /* ---------------- Help & references ----------------
+     Reference docs are PNG page images, not PDFs. iOS gives a standalone PWA no way to view a
+     PDF without either trapping the user (chrome-less webview, force-quit) or hauling in pdf.js
+     to rasterize it. A PNG is just an image: the app renders it natively, offline, with zero
+     executable dependencies, and the source file stays something we can produce and control.
+     The info icon opens a chooser: the concentration-specific CHLA help sheet and the
+     parameter ranges grid. */
+  const DOC_GRID = "Parameter_Ranges.png";
+  const DOC_HELP = { U100:"Insulin_Calc_Help.png", U10:"Dilute_Insulin_Calc_Help.png" };
+  function preloadDocs(){          // warm the cache so the viewer opens instantly
+    [DOC_GRID, DOC_HELP.U100, DOC_HELP.U10].forEach(src => { const i = new Image(); i.src = src; });
   }
-  // kept name: called once at init. Preloads all reference PDFs.
-  async function preloadParameterGrid(){
-    await Promise.allSettled([preloadPdf(PDF_GRID), preloadPdf(HELP_PDFS.U100), preloadPdf(HELP_PDFS.U10)]);
-  }
-  function helpPdfUrl(){ return HELP_PDFS[params.conc] || HELP_PDFS.U100; }
-  function sharePdf(url, title){
-    const f = pdfFiles[url];
-    if(f && navigator.canShare && navigator.canShare({ files:[f] })){
-      navigator.share({ files:[f], title })
-        .catch(err => { if(!err || err.name !== "AbortError") window.open(url, "_blank", "noopener"); });
-      return;
-    }
-    window.open(url, "_blank", "noopener");
-  }
+  function helpDocUrl(){ return DOC_HELP[params.conc] || DOC_HELP.U100; }
   function openInfoSheet(){
     $("infoHelpLabel").textContent = (params.conc === "U10")
       ? "Dilute U-10 Calculator Help" : "Standard U-100 Calculator Help";
@@ -1872,84 +1861,51 @@ const UI = (() => {
   }
   function closeInfoSheet(){ $("infoScrim").classList.remove("open"); }
 
-  /* Document open strategy.
-     PRIMARY: window.open(url, "_blank") — a new browsing context, NOT a navigation. The PWA
-     keeps running underneath, and iOS hands the PDF to its native viewer (real multipage
-     scroll/zoom) with its own Done / "back to app" chrome. This is why the old approach
-     trapped us: it navigated the top-level window, which replaced the app — and its JS —
-     leaving nothing able to close the PDF.
-     Must be called SYNCHRONOUSLY inside the tap handler, or iOS suppresses it as a popup.
-     FALLBACK: if the popup is blocked (w is null), render in-app with pdf.js. */
-  function openDocument(url, title){
-    let w = null;
-    try{ w = window.open(url, "_blank"); }catch(_){ w = null; }
-    if(!w){ openPdf(url, title); }         // suppressed → keep it in-app rather than fail silently
-  }
-
-  /* In-app PDF viewer (dismissible; keeps the PWA intact — no navigation, no share-sheet detour).
-     iOS Safari renders only the FIRST page of a PDF placed in an iframe/embed, with no way to
-     scroll. So the document is decoded with pdf.js and every page is rasterized into a scrollable
-     column. If pdf.js is unavailable for any reason, we fall back to the iframe (page 1, but
-     never a broken screen). */
-  const PDFJS_SRC    = "./pdf.min.mjs";
-  const PDFJS_WORKER = "./pdf.worker.min.mjs";
-  let pdfjsLib = null, pdfRenderToken = 0;
-  async function getPdfjs(){
-    if(pdfjsLib) return pdfjsLib;
-    const lib = await import(PDFJS_SRC);
-    lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
-    pdfjsLib = lib;
-    return lib;
-  }
-  function openPdf(url, title){
+  /* Document viewer — IN-APP, always.
+     Do NOT hand the doc to Safari via window.open(url, "_blank"): in iOS standalone mode that
+     spawns another browsing context INSIDE the PWA's own webview, not a cross-app Safari window.
+     A chrome-less webview yields a chrome-less document — scrollable but with no way back,
+     forcing a force-quit. Apple keeps same-origin in-scope URLs inside the installed app and
+     there is no API to escape that. Tested on-device; do not reintroduce.
+     So we display the page image ourselves, in a viewer we control and can dismiss. */
+  let docZoomed = false;
+  function openDoc(src, title){
     $("pdfvTitle").textContent = title || "Document";
+    const img = $("pdfvImg");
+    img.alt = title || "Document";
+    img.src = src;
+    setDocZoom(false);
+    const doc = $("pdfvPages"); doc.scrollTop = 0; doc.scrollLeft = 0;
     const v = $("pdfViewer");
     v.classList.add("open"); v.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
     $("pdfvDone").focus();
-    renderPdf(url);
   }
-  async function renderPdf(url){
-    const token = ++pdfRenderToken;
-    const pages = $("pdfvPages"), frame = $("pdfvFrame");
-    frame.hidden = true; pages.hidden = false;
-    pages.innerHTML = `<div class="pdfv-msg">Loading document…</div>`;
-    pages.scrollTop = 0;
-    try{
-      const pdfjs = await getPdfjs();
-      const doc = await pdfjs.getDocument({ url }).promise;
-      if(token !== pdfRenderToken) return;            // viewer closed / another doc opened
-      pages.innerHTML = "";
-      // Rasterize at device pixel ratio so text stays crisp when the user pinches in.
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
-      const cssW = Math.min(pages.clientWidth - 20, 900) || 360;
-      for(let n = 1; n <= doc.numPages; n++){
-        const page = await doc.getPage(n);
-        if(token !== pdfRenderToken) return;
-        const base = page.getViewport({ scale: 1 });
-        const viewport = page.getViewport({ scale: (cssW / base.width) * dpr });
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
-        canvas.setAttribute("aria-label", `Page ${n} of ${doc.numPages}`);
-        pages.appendChild(canvas);
-        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-      }
-    }catch(err){
-      if(token !== pdfRenderToken) return;
-      // Fallback: hand it to the browser's own viewer rather than showing nothing.
-      pages.hidden = true; frame.hidden = false; frame.src = url;
-    }
+  function setDocZoom(on){
+    docZoomed = on;
+    $("pdfvPages").classList.toggle("is-zoomed", on);
+    $("pdfvZoom").textContent = on ? "Fit width" : "Zoom in";
+    $("pdfvZoom").setAttribute("aria-pressed", on ? "true" : "false");
   }
-  function closePdf(){
+  function toggleDocZoom(){
+    const doc = $("pdfvPages"), img = $("pdfvImg");
+    // Keep the point under the viewport centre roughly stable across the zoom change.
+    const midY = (doc.scrollTop + doc.clientHeight / 2) / Math.max(img.offsetHeight, 1);
+    setDocZoom(!docZoomed);
+    requestAnimationFrame(() => {
+      doc.scrollTop  = Math.max(0, midY * img.offsetHeight - doc.clientHeight / 2);
+      doc.scrollLeft = Math.max(0, (img.offsetWidth - doc.clientWidth) / 2);
+    });
+  }
+  function closeDoc(){
     const v = $("pdfViewer");
     if(!v.classList.contains("open")) return;
-    pdfRenderToken++;                       // cancel any in-flight render
     v.classList.remove("open"); v.setAttribute("aria-hidden", "true");
-    $("pdfvPages").innerHTML = "";          // free the rasterized pages
-    $("pdfvFrame").src = "about:blank"; $("pdfvFrame").hidden = true;
+    $("pdfvImg").src = "";              // release the decoded bitmap
     document.body.style.overflow = "";
   }
+  function closeInfoSheet(){ $("infoScrim").classList.remove("open"); }
+
 
   /* ---------------- wire up ---------------- */
   function init(){
@@ -2016,14 +1972,16 @@ const UI = (() => {
     $("btnHelpPdf").addEventListener("click", () => {
       const label = (params.conc === "U10") ? "Dilute U-10" : "Standard U-100";
       closeInfoSheet();
-      openDocument(helpPdfUrl(), `${label} Insulin Calculator Help`);
+      openDoc(helpDocUrl(), `${label} Insulin Calculator Help`);
     });
     $("btnGridPdf").addEventListener("click", () => {
       closeInfoSheet();
-      openDocument(PDF_GRID, "Parameter Ranges Grid");
+      openDoc(DOC_GRID, "Parameter Ranges Grid");
     });
-    $("pdfvDone").addEventListener("click", closePdf);
-    preloadParameterGrid();
+    $("pdfvDone").addEventListener("click", closeDoc);
+    $("pdfvZoom").addEventListener("click", toggleDocZoom);
+    $("pdfvImg").addEventListener("click", toggleDocZoom);   // tap the sheet to zoom
+    preloadDocs();
     $("btnCloseSheet").addEventListener("click", closeSheet);
     $("btnCancel").addEventListener("click", closeSheet);
     $("btnSave").addEventListener("click", save);
@@ -2033,7 +1991,7 @@ const UI = (() => {
       b.setAttribute("aria-expanded", open ? "true" : "false");
     }));
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
-    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closePdf(); closeSheet(); closeMealSheet(); closeInfoSheet(); } });
+    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeDoc(); closeSheet(); closeMealSheet(); closeInfoSheet(); } });
 
     $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
     $("setAge").addEventListener("change", () => { applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
