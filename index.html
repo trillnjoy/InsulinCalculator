@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.11.2 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.11.3 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -138,6 +138,21 @@ body{
 .meal-chev{display:none}
 
 /* ---------- Parameter validation badges (auto: check / yield / X) ---------- */
+/* ---- Confirmable parameter indicators ----
+   Unconfirmed = dithered (muted, grayscale, dashed ring) → "you have not owned this yet".
+   Tapping confirms: full color, solid ring. The caution TEXT stays fully legible either
+   way, so muting the icon never mutes the warning. */
+.badge.confirmable{padding:0;border:1.5px dashed var(--line-strong);border-radius:50%;
+  background:transparent;cursor:pointer;-webkit-tap-highlight-color:transparent;
+  width:34px;height:34px;opacity:.45;filter:grayscale(1);transition:opacity .12s,filter .12s,border-color .12s;}
+.badge.confirmable svg{width:20px;height:20px}
+.badge.confirmable:active{transform:scale(.94)}
+.badge.confirmable.is-confirmed{opacity:1;filter:none;border-style:solid;border-color:currentColor;}
+.badge.confirmable.badge-ok.is-confirmed{color:var(--safe);border-color:var(--safe)}
+.badge.confirmable.badge-caution.is-confirmed{color:var(--advisory);border-color:var(--advisory)}
+.confirm-gate{margin:8px 2px 0;padding:9px 12px;border-radius:9px;
+  background:#FBF3DF;border:1px solid #E4C766;color:#7A5B10;
+  font-size:12.5px;line-height:1.45;font-weight:600}
 .badge{width:22px;height:22px;flex:none;display:grid;place-items:center;line-height:0}
 .badge svg{width:22px;height:22px;display:block}
 .badge-ok svg{width:20px;height:20px;color:var(--safe)}
@@ -244,18 +259,9 @@ body{
 .rescue-body strong{color:var(--stop)}
 
 /* reconcile-and-proceed acknowledgment */
-.ack-row{display:flex;align-items:center;gap:10px;margin-top:14px;cursor:pointer;font-size:13px;font-weight:650;color:var(--ink);-webkit-tap-highlight-color:transparent}
-.ack-row input{position:absolute;opacity:0;width:1px;height:1px}
-.ack-box{width:22px;height:22px;flex:none;border:1.5px solid var(--advisory);border-radius:6px;background:#fff;display:grid;place-items:center;transition:background .15s}
-.ack-box svg{width:14px;height:14px;color:#fff;opacity:0;transition:opacity .12s}
-.ack-row input:checked + .ack-box{background:var(--advisory);border-color:var(--advisory)}
-.ack-row input:checked + .ack-box svg{opacity:1}
-.ack-row input:focus-visible + .ack-box{box-shadow:0 0 0 3px var(--advisory-wash)}
 
 /* persistent prescriber-verified flag on the dose */
-.dose-flag{display:flex;align-items:flex-start;gap:8px;margin-top:13px;padding:9px 11px;border-radius:9px;
   background:var(--stop-wash);border:1px solid #e8b8b8;color:var(--stop);font-size:12px;font-weight:600;line-height:1.38}
-.dose-flag svg{width:16px;height:16px;flex:none;margin-top:1px}
 
 /* ---------- Advisory chips ---------- */
 .advisories{margin-top:12px;display:flex;flex-direction:column;gap:8px}
@@ -290,6 +296,19 @@ body{
 .btn-ghost:hover{background:var(--teal-wash)}
 .btn-block{width:100%}
 
+/* ---------- In-app PDF viewer ---------- */
+.pdfv{ position:fixed; inset:0; z-index:1000; background:#12232b; display:none; flex-direction:column; }
+.pdfv.open{ display:flex; }
+.pdfv-bar{ flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:0 12px 0 16px; box-sizing:border-box;
+  height:calc(52px + env(safe-area-inset-top, 0px)); padding-top:env(safe-area-inset-top, 0px);
+  background:var(--teal-deep); color:#fff; }
+.pdfv-title{ font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pdfv-done{ flex:0 0 auto; min-height:40px; min-width:72px; padding:8px 18px; border:0; border-radius:8px;
+  background:rgba(255,255,255,.18); color:#fff; font-size:16px; font-weight:700; cursor:pointer;
+  -webkit-tap-highlight-color:transparent; }
+.pdfv-done:active{ background:rgba(255,255,255,.34); }
+.pdfv-frame{ flex:1 1 auto; width:100%; border:0; background:#fff; }
 /* ---------- Modal ---------- */
 .scrim{
   position:fixed;inset:0;background:rgba(16,36,44,.42);backdrop-filter:blur(2px);
@@ -401,6 +420,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
   <!-- PARAMETERS -->
   <div class="eyebrow">Parameters from order</div>
   <div class="card" id="paramCard"></div>
+  <div class="confirm-gate" id="confirmGate"></div>
 
   <!-- PATIENT VALUES -->
   <div class="eyebrow">Enter patient values</div>
@@ -615,6 +635,17 @@ select.set-input{font-family:var(--sans);font-weight:500}
   </div>
 </div>
 
+<!-- In-app PDF viewer — full-screen & dismissible. The Done button sits in a top bar kept
+     clear of the PDF area, so iOS's in-iframe PDF controls can never cover it (the failure mode
+     of the earlier modal). No navigation away; the PWA stays intact and Done returns to the app. -->
+<div id="pdfViewer" class="pdfv" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Document viewer">
+  <div class="pdfv-bar">
+    <span class="pdfv-title" id="pdfvTitle">Document</span>
+    <button type="button" class="pdfv-done" id="pdfvDone" aria-label="Close document">Done</button>
+  </div>
+  <iframe id="pdfvFrame" class="pdfv-frame" title="PDF document"></iframe>
+</div>
+
 <script>
 "use strict";
 /* ============================================================================
@@ -697,6 +728,27 @@ const NEST = {
     a5_11:{ lowRule:120, lowCDS:130, hiCDS:180, hiRule:200, iqr:[130,150] },
     gte12:{ lowRule:120, lowCDS:120, hiCDS:150, hiRule:200, iqr:[130,150] } }
 };
+/* ---- Rule-band alert text — SINGLE SOURCE, matches the deployed EHR calculator ----
+   Pattern: "<Param> <value> is extremely HIGH/LOW for age (OVER/UNDER <threshold>).
+             <Which> Insulin may be underdosed/overdosed if ordered <param> is incorrect;
+             verify before proceeding."
+   Direction of harm: a HIGH ICR/CF/Target under-delivers insulin; a LOW one over-delivers.
+   (Two fixes vs. the source list: Target-BG-low cites the LOW threshold and reads "overdosed";
+   CF-low reads "overdosed" not "overdose".) */
+const RULE_TXT = {
+  ic:     { name:"ICR",        cover:"Carb coverage" },
+  cf:     { name:"CF/ISF",     cover:"Correction"    },
+  target: { name:"Target BG",  cover:"Correction"    }
+};
+function ruleAlert(field, dir, value, threshold){
+  const t = RULE_TXT[field]; if(!t) return "";
+  const HL   = dir === "high" ? "HIGH" : "LOW";
+  const OU   = dir === "high" ? "OVER" : "UNDER";
+  const dose = dir === "high" ? "underdosed" : "overdosed";
+  return `${t.name} ${value} is extremely ${HL} for age (${OU} ${threshold}). ` +
+         `${t.cover} Insulin may be ${dose} if ordered ${t.name} is incorrect; verify before proceeding.`;
+}
+
 // nest lookup: only U-100 carries the tiered model; U-10 returns null (hard limits only).
 function nestFor(conc, field, band){
   if(conc==="U10"){
@@ -756,19 +808,11 @@ const Engine = (() => {
     else if(num > range.max){ value = range.max; corrected = true;
       message = `${name} ${round2(num)} is above the allowed maximum. Corrected to ${range.max}.`; }
     // soft advisory: age-tiered Low/Hi Rule (order sign + calculator inform), non-blocking.
-    // Same threshold fires here and on the gauge; CF-150 verify cue retired.
+    // Wording matches the deployed EHR calculator verbatim (see ruleAlert).
     const N = (typeof nestFor === "function") ? nestFor(conc, field, ageBandKey) : null;
     if(N && advisory == null && message == null){
-      if(value < N.lowRule){
-        advisory = `${name} ${round2(value)} is below the age soft-floor of ${N.lowRule} for this band — verify (more insulin than usual for age). Acknowledge to proceed.`;
-      } else if(value > N.hiRule){
-        if(field === "ic")
-          advisory = `Insulin:carb ratio ${round2(value)} is above the age soft-ceiling of ${N.hiRule} — a ratio this high makes carb coverage negligible (sliding-scale–style order). Verify. Acknowledge to proceed.`;
-        else if(field === "cf")
-          advisory = `Correction factor ${round2(value)} is above the age soft-ceiling of ${N.hiRule} mg/dL/unit — high; delivers very little insulin per point above target. Verify the sensitivity factor. Acknowledge to proceed.`;
-        else
-          advisory = `${name} ${round2(value)} is above the age soft-ceiling of ${N.hiRule} — verify prescriber intent. Acknowledge to proceed.`;
-      }
+      if(value < N.lowRule)      advisory = ruleAlert(field, "low",  round2(value), N.lowRule);
+      else if(value > N.hiRule)  advisory = ruleAlert(field, "high", round2(value), N.hiRule);
     }
     return { ok:true, value, corrected, advisory, message, range, entered:num };
   }
@@ -990,7 +1034,21 @@ const UI = (() => {
   ];
   let mealKey = null;          // selected meal/order (visual cue only)
   let mealAuto = false;        // true when defaulted (by product or time) vs. manually picked
-  let targetAck = false;       // RN acknowledged a prescriber-verified off-tier target
+  /* ---- Parameter confirmation (RN "owns" each ordered value) ----
+     Every ordered parameter renders a dithered indicator — a gray check (in range) or a
+     caution yield (outside the age Rule band). Tapping it is the RN's active confirmation
+     that the value was seen and validated. Carb/BG entry stays disabled until all ordered
+     parameters are confirmed, which gates the Calculate button transitively.
+     This is why there is no challenge block in the dose space: the challenge and the
+     acknowledgement both belong at the parameter that raised them. */
+  let confirmed = new Set();   // param keys the RN has actively confirmed
+  function paramsToConfirm(){
+    const keys = ["cf", "target"];
+    if(!correctionOnlyMode()) keys.unshift("ic");   // correction-only carries no ICR to own
+    return keys;
+  }
+  function allParamsConfirmed(){ return paramsToConfirm().every(k => confirmed.has(k)); }
+  function resetConfirmations(){ confirmed = new Set(); }
 
   // Default the order by time of day. Windows per Clinical Standard Work; gaps = snack.
   function mealForTime(date){
@@ -1048,6 +1106,15 @@ const UI = (() => {
       const badge = st.state === "caution" ? SVG.yield
                   : st.state === "error"   ? SVG.x
                   :                          SVG.check;
+      // Rounding is a formatting choice, not an ordered clinical parameter — static indicator.
+      const needsConfirm = paramsToConfirm().includes(r.key);
+      const isOn = confirmed.has(r.key);
+      const ind = needsConfirm
+        ? `<button type="button" class="badge badge-${st.state} confirmable${isOn?" is-confirmed":""}"
+             data-confirm="${r.key}" aria-pressed="${isOn?"true":"false"}"
+             aria-label="${isOn ? "Confirmed" : "Tap to confirm"} — ${st.aria}"
+             title="${isOn ? "Confirmed" : "Tap to confirm this ordered value"}">${badge}</button>`
+        : `<span class="badge badge-${st.state}" role="img" aria-label="${st.aria}">${badge}</span>`;
       return `
       <div class="param${st.state==='ok'?'':' flag-'+st.state}">
         <div class="meta">
@@ -1055,16 +1122,38 @@ const UI = (() => {
           ${r.desc?`<div class="desc">${r.desc}</div>`:``}
           ${st.msg?`<div class="param-msg ${st.state}">${st.msg}</div>`:``}
         </div>
-        <span class="badge badge-${st.state}" role="img" aria-label="${st.aria}">${badge}</span>
+        ${ind}
         <div class="val"><span class="num">${r.num}</span><span class="uom">${r.uom}</span></div>
       </div>`;
     }).join("");
+    applyConfirmGate();
 
     $("inCarbs").max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;
     applyEntryVisibility();   // correction-only collects BG only — no carb field
     invalidateDose();   // a parameter change requires a fresh, intentional calculation
     renderSubcalcs();   // refresh committed previews under the new parameters
   }
+
+  // Entry is disabled until every ordered parameter is confirmed — this is the job-aid
+  // behavior ("not enabled for input of carbs eaten or measured blood glucose until all
+  // above parameters are confirmed"). Calculate is gated transitively via bothEntered().
+  function applyConfirmGate(){
+    const ok = allParamsConfirmed();
+    ["inCarbs","inBg"].forEach(id => {
+      const el = $(id); if(!el) return;
+      el.disabled = !ok;
+      if(!ok) el.value = "";
+    });
+    const gate = $("confirmGate");
+    if(gate){
+      const left = paramsToConfirm().filter(k => !confirmed.has(k)).length;
+      gate.style.display = ok ? "none" : "";
+      gate.textContent = `Confirm each ordered parameter above (tap ${SYM_TAP}) to enable carb and blood-glucose entry — ${left} remaining.`;
+    }
+    if(!ok){ doseShown = false; }
+    recompute();
+  }
+  const SYM_TAP = "✓ / ⚠";
 
   // Correction-only orders carry no carbohydrate coverage, so the carb entry is
   // removed entirely (not just ignored). BG alone drives the dose.
@@ -1087,14 +1176,9 @@ const UI = (() => {
     const N = nestFor(conc, key, band), v = params[key];
     if(N && v != null){
       if(v < N.lowRule)
-        return { state:"caution", aria:"Caution — verify",
-                 msg:`Below the age soft-floor of ${N.lowRule} — verify (more insulin than usual for age).` };
-      if(v > N.hiRule){
-        const m = key === "ic" ? `Above the age soft-ceiling of ${N.hiRule} — verify a prandial plan (sliding-scale-style order).`
-                : key === "cf" ? `Above the age soft-ceiling of ${N.hiRule} mg/dL/unit — high; verify the correction factor.`
-                :                 `Above the age soft-ceiling of ${N.hiRule} — verify prescriber intent.`;
-        return { state:"caution", aria:"Caution — verify", msg:m };
-      }
+        return { state:"caution", aria:"Caution — verify", msg: ruleAlert(key, "low", v, N.lowRule) };
+      if(v > N.hiRule)
+        return { state:"caution", aria:"Caution — verify", msg: ruleAlert(key, "high", v, N.hiRule) };
     }
     return { state:"ok", aria:"Within range" };
   }
@@ -1168,8 +1252,7 @@ const UI = (() => {
     const r = computeCurrent();
     const C = CDS_CONFIG.concentrations[params.conc];
     const u = C.unit==='Units' ? 'units' : 'Syr Unit';
-    const holding = r.targetOffTier && !targetAck;   // reconcile prompt up — hold the math
-    $("carbSub").innerHTML = (!correctionOnlyMode() && !holding && r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
+    $("carbSub").innerHTML = (!correctionOnlyMode() && r.carbsEntered != null && (r.state === "DOSE" || r.state === "INCOMPLETE"))
       ? `Carb coverage = ${fmt(r.carbsUsed ?? r.carbsEntered)} ÷ ${fmt(params.ic)} = <b>${fmt(r.prandial)} ${u}</b>`
       : "";
     $("bgSub").innerHTML = (r.bgEntered != null && r.state === "DOSE")
@@ -1229,21 +1312,9 @@ const UI = (() => {
         <div class="rescue-body">${r.rescue.body}</div>`;
       return;
     }
-    if(r.targetOffTier && !targetAck){
-      // Reconcile-and-proceed: challenge the off-tier target, but allow the RN to
-      // proceed once the prescriber has verified intent. Not a hard block.
-      panel.classList.add("is-caution");
-      head.textContent = "Verify target BG";
-      body.innerHTML = `
-        <div class="rescue-title">${SVG.x}<span>Target outside age limit</span></div>
-        <div class="rescue-body">Target BG <strong>${fmt(params.target)}</strong> is ${r.targetDir} the ${r.targetBand.label} limit (${r.targetBand.min}–${r.targetBand.max} mg/dL). Pharmacy and RN should challenge the order. If the prescriber verifies intent, acknowledge to calculate the dose.</div>
-        <label class="ack-row" for="targetAck">
-          <input type="checkbox" id="targetAck" />
-          <span class="ack-box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-          <span>Prescriber verified intent — calculate dose</span>
-        </label>`;
-      return;
-    }
+    // NOTE: no off-tier challenge block here. Out-of-range parameters are challenged and
+    // acknowledged at the parameter row that raised them (a challenge in the dose space
+    // could only name one parameter, and misattributes a parameter problem to the dose).
     if(r.state === "INCOMPLETE"){
       head.textContent = "Calculated dose";
       body.innerHTML = `
@@ -1279,9 +1350,7 @@ const UI = (() => {
         · increment ${fmt(params.increment)} ${incUnit}
       </div>
       ${r.correctionHeld ? `
-      <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 2&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}
-      ${r.targetOffTier ? `
-      <div class="dose-flag">${SVG.x}<div>Target BG ${fmt(params.target)} is ${r.targetDir} the ${r.targetBand.label} limit (${r.targetBand.min}–${r.targetBand.max}) — prescriber-verified.</div></div>` : ``}`;
+      <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 2&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}`;
   }
 
   // Cap notices appear inline beneath each field on blur (see capHint), and the
@@ -1729,14 +1798,15 @@ const UI = (() => {
                increment:inc, webhook:$("setWebhook").value.trim() };
     StandaloneParameterSource.save(params);
     Hooks.emit("parametersSaved", params);
-    targetAck = false;   // a changed order requires fresh prescriber verification
+    resetConfirmations();   // a changed order must be re-confirmed parameter by parameter
     // Switching to dilute (or back to U-100) re-defaults the order cue.
     if(concChanged){ mealKey = defaultMeal(conc, new Date()); mealAuto = true; }
     renderMeal();        // order sig depends on ic/cf/target/increment — refresh every save
     renderParams();
-    // Keep sheet open if a correction/advisory is still shown so the nurse can verify; else close.
-    const anyMsg = ["icMsg","cfMsg","targetMsg"].some(id => $(id).classList.contains("show"));
-    if(!anyMsg) closeSheet();
+    // Save has committed (line above). Soft advisories / boundary corrections are non-blocking
+    // and already surface as badges on the main calculator, so always return to it — closing the
+    // sheet IS the save confirmation. (Blocking cases — empty required fields — returned earlier.)
+    closeSheet();
   }
 
   /* ---------------- Deployment notes ---------------- */
@@ -1794,6 +1864,23 @@ const UI = (() => {
   }
   function closeInfoSheet(){ $("infoScrim").classList.remove("open"); }
 
+  // In-app PDF viewer (dismissible; keeps the PWA intact — no navigation, no share-sheet detour).
+  function openPdf(url, title){
+    $("pdfvTitle").textContent = title || "Document";
+    $("pdfvFrame").src = url;
+    const v = $("pdfViewer");
+    v.classList.add("open"); v.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    $("pdfvDone").focus();
+  }
+  function closePdf(){
+    const v = $("pdfViewer");
+    if(!v.classList.contains("open")) return;
+    v.classList.remove("open"); v.setAttribute("aria-hidden", "true");
+    $("pdfvFrame").src = "about:blank";   // unload the PDF so it never lingers or captures input
+    document.body.style.overflow = "";
+  }
+
   /* ---------------- wire up ---------------- */
   function init(){
     mealKey = defaultMeal(params.conc, new Date()); mealAuto = true;
@@ -1813,7 +1900,6 @@ const UI = (() => {
 
     // reconcile-and-proceed: acknowledge a prescriber-verified off-tier target
     $("dosePanel").addEventListener("change", e => {
-      if(e.target && e.target.id === "targetAck"){ targetAck = e.target.checked; renderSubcalcs(); recompute(); }
     });
 
     $("inCarbs").addEventListener("input", function(){
@@ -1838,6 +1924,14 @@ const UI = (() => {
     $("inBg").addEventListener("blur", () => { capHint("bg"); renderSubcalcs(); });
     $("inIOB").addEventListener("change", () => { invalidateDose(); renderSubcalcs(); });
     $("calcBtn").addEventListener("click", calculateDose);
+    // Tapping a parameter indicator is the RN's active confirmation of that ordered value.
+    $("paramCard").addEventListener("click", e => {
+      const b = e.target.closest("button[data-confirm]");
+      if(!b) return;
+      const key = b.dataset.confirm;
+      if(confirmed.has(key)) confirmed.delete(key); else confirmed.add(key);
+      renderParams();
+    });
 
     $("btnReset").addEventListener("click", () => {
       $("inCarbs").value=""; $("inBg").value=""; $("inIOB").checked=false;
@@ -1851,13 +1945,14 @@ const UI = (() => {
     $("infoScrim").addEventListener("click", e => { if(e.target === $("infoScrim")) closeInfoSheet(); });
     $("btnHelpPdf").addEventListener("click", () => {
       const label = (params.conc === "U10") ? "Dilute U-10" : "Standard U-100";
-      sharePdf(helpPdfUrl(), `${label} Insulin Calculator — Help`);
       closeInfoSheet();
+      openPdf(helpPdfUrl(), `${label} Insulin Calculator Help`);
     });
     $("btnGridPdf").addEventListener("click", () => {
-      sharePdf(PDF_GRID, "Insulin Calculator — Parameter Grid (Ranges)");
       closeInfoSheet();
+      openPdf(PDF_GRID, "Parameter Ranges Grid");
     });
+    $("pdfvDone").addEventListener("click", closePdf);
     preloadParameterGrid();
     $("btnCloseSheet").addEventListener("click", closeSheet);
     $("btnCancel").addEventListener("click", closeSheet);
@@ -1868,7 +1963,7 @@ const UI = (() => {
       b.setAttribute("aria-expanded", open ? "true" : "false");
     }));
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
-    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeSheet(); closeMealSheet(); closeInfoSheet(); } });
+    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closePdf(); closeSheet(); closeMealSheet(); closeInfoSheet(); } });
 
     $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
     $("setAge").addEventListener("change", () => { applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
