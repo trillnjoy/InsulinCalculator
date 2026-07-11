@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.11.6 (release 1.11) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.12.2 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -115,7 +115,7 @@ body{
 .param .name{font-size:15px;font-weight:600}
 .param .desc{font-size:11.5px;color:var(--ink-faint);margin-top:2px;line-height:1.35}
 .param .val{display:flex;align-items:baseline;justify-content:flex-end;font-family:var(--mono);font-size:19px;font-weight:600;color:var(--ink);white-space:nowrap}
-.param .val .num{text-align:right}
+.param .val .num{min-width:46px;text-align:right}
 .param .val .uom{width:70px;padding-left:10px;text-align:left;font-size:12px;color:var(--ink-faint);font-family:var(--sans);font-weight:500}
 .check{width:20px;height:20px;flex:none;color:var(--safe)}
 
@@ -131,6 +131,8 @@ body{
   border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;color:var(--ink-faint);
 }
 .meal-icon img{width:100%;height:100%;object-fit:contain}
+.meal-icon.is-query{box-shadow:0 0 0 2px var(--advisory)}
+.meal-opt .mo-icon.is-query{box-shadow:0 0 0 2px var(--advisory)}
 .meal-icon .meal-ph{width:24px;height:24px}
 .meal-meta{flex:1;min-width:0}
 .meal-label{display:block;font-size:16px;font-weight:650;color:var(--ink)}
@@ -142,10 +144,9 @@ body{
    Unconfirmed = dithered (muted, grayscale, dashed ring) → "you have not owned this yet".
    Tapping confirms: full color, solid ring. The caution TEXT stays fully legible either
    way, so muting the icon never mutes the warning. */
-.badge.confirmable{padding:0;border:1.5px dashed var(--line-strong);border-radius:50%;
+.badge.confirmable{padding:0;border-style:dashed;border-color:var(--line-strong);
   background:transparent;cursor:pointer;-webkit-tap-highlight-color:transparent;
-  width:34px;height:34px;opacity:.45;filter:grayscale(1);transition:opacity .12s,filter .12s,border-color .12s;}
-.badge.confirmable svg{width:20px;height:20px}
+  opacity:.45;filter:grayscale(1);transition:opacity .12s,filter .12s,border-color .12s;}
 .badge.confirmable:active{transform:scale(.94)}
 .badge.confirmable.is-confirmed{opacity:1;filter:none;border-style:solid;border-color:currentColor;}
 .badge.confirmable.badge-ok.is-confirmed{color:var(--safe);border-color:var(--safe)}
@@ -153,9 +154,9 @@ body{
 .confirm-gate{margin:8px 2px 0;padding:9px 12px;border-radius:9px;
   background:#FBF3DF;border:1px solid #E4C766;color:#7A5B10;
   font-size:12.5px;line-height:1.45;font-weight:600}
-.badge{width:22px;height:22px;flex:none;display:grid;place-items:center;line-height:0}
-.badge svg{width:22px;height:22px;display:block}
-.badge-ok svg{width:20px;height:20px;color:var(--safe)}
+.badge{width:34px;height:34px;flex:none;display:grid;place-items:center;line-height:0;box-sizing:border-box;border:1.5px solid transparent;border-radius:50%}
+.badge svg{width:20px;height:20px;display:block}
+.badge-ok svg{color:var(--safe)}
 .param-msg{font-size:11.5px;font-weight:600;margin-top:4px;line-height:1.35}
 .param-msg.caution{color:var(--advisory)}
 .param-msg.error{color:var(--stop)}
@@ -486,11 +487,6 @@ select.set-input{font-family:var(--sans);font-weight:500}
   </div>
 
   <div class="advisories" id="advisories"></div>
-
-  <div class="mode" id="modeBanner">
-    <span class="dot"></span>
-    <span><b>Standalone mode.</b> Parameters are set in Settings (the gear), not drawn from an EHR order.</span>
-  </div>
 
   <div class="disclaimer">
     <b>Internal working tool — not for clinical use</b> without pharmacy and informatics committee review.
@@ -1041,13 +1037,75 @@ const UI = (() => {
   let params = StandaloneParameterSource.load();
 
   // Meal / order context. Icons live in the repo root (offline-cached).
+  /* ---- Order frequency × time of day → icon ------------------------------------------
+     This is a wrong-task check, not decoration. On the MAR an intensive SC insulin patient
+     may carry 4–6 concurrent rapid-acting orders (Breakfast / Lunch / Dinner or generic Meal,
+     Snack, Bedtime, Overnight). The RN picks one task; the icon asks "is that plausible for
+     the clock right now?" A fixed-time order (Breakfast) always shows its own icon — the
+     frequency IS the time. The ambiguous ones (Meal, Bedtime, Overnight) are resolved against
+     the current hour, and when the selected task doesn't fit the clock we show the query icon
+     rather than silently confirming a probable mis-pick.
+     Windows are the same ones the app already defaults by (Clinical Standard Work). */
+  const TW = {                        // [startHour, endHour) — NIGHT/OVERNIGHT wrap midnight
+    BREAKFAST:[7,9], LUNCH:[11,13], DINNER:[17,19], BEDTIME:[20,23], OVERNIGHT:[23,7],
+    NIGHT:[20,5]                      // any daytime order picked in here is suspect
+  };
+  const ICON = {
+    breakfast:"Breakfast_216.png", lunch:"Lunch_216.png", dinner:"Dinner_216.png",
+    snack:"Snack_216.png", bedtime:"Bedtime_216.png", overnight:"Overnight.png",
+    formula:"Formula_216.png",
+    nightQuery:"Overnight_Q.png",     // night order at the wrong hour (moon + ?)
+    dayQuery:"Daytime_Q.png",         // daytime order picked at night (sun + ?)
+    clock:"clock_216.png"
+  };
+  const minsOf = d => d.getHours()*60 + d.getMinutes();
+  function inWindow(d, [h1,h2]){
+    const m = minsOf(d), a = h1*60, b = h2*60;
+    return (a <= b) ? (m >= a && m < b) : (m >= a || m < b);   // wraps midnight
+  }
+  // Generic "Meal" has no clock of its own — resolve it to the meal period we're actually in.
+  function mealPeriod(d){
+    const m = minsOf(d);
+    if(m >= 5*60  && m < 11*60) return "breakfast";
+    if(m >= 11*60 && m < 16*60) return "lunch";
+    if(m >= 16*60 && m < 20*60) return "dinner";
+    return null;                       // 20:00–04:59 → not a meal period (night)
+  }
+  // Daytime orders — plausible 05:00–20:00, suspect at night.
+  const DAY_ORDERS = ["breakfast","lunch","dinner","meal","snack"];
+  function iconForMeal(key, date){
+    const d = date || new Date();
+    // Formula is exempt: dilute feeds run around the clock, so an overnight feed is expected,
+    // not an error. Flagging it would fire on the commonest dilute case (alert fatigue).
+    if(DAY_ORDERS.includes(key) && inWindow(d, TW.NIGHT)) return ICON.dayQuery;
+    switch(key){
+      case "breakfast": case "lunch": case "dinner":   // frequency names the time — always itself
+      case "snack":                                    // legitimate at any daytime hour
+      case "formula": return ICON[key];
+      case "meal":      return ICON[mealPeriod(d)] || ICON.dayQuery;
+      case "bedtime":   return inWindow(d, TW.BEDTIME)   ? ICON.bedtime   : ICON.nightQuery;
+      case "overnight": return inWindow(d, TW.OVERNIGHT) ? ICON.overnight : ICON.nightQuery;
+      default: return null;
+    }
+  }
+  // Does the picked task fit the clock? Drives the alt/label text so the cue is not icon-only.
+  function mealFitsClock(key, date){
+    const d = date || new Date();
+    if(DAY_ORDERS.includes(key)) return !inWindow(d, TW.NIGHT);
+    if(key === "bedtime")   return inWindow(d, TW.BEDTIME);
+    if(key === "overnight") return inWindow(d, TW.OVERNIGHT);
+    return true;                       // formula, correction-only: around the clock
+  }
+
   const MEALS = [
-    { key:"breakfast", label:"Breakfast", icon:"Breakfast_216.png" },
-    { key:"lunch",     label:"Lunch",     icon:"Lunch_216.png" },
-    { key:"dinner",    label:"Dinner",    icon:"Dinner_216.png" },
-    { key:"snack",     label:"Snack",     icon:"Snack_216.png" },
-    { key:"bedtime",   label:"Bedtime",   icon:"Bedtime_216.png" },
-    { key:"formula",   label:"Formula",   icon:"Formula_216.png" }
+    { key:"breakfast", label:"Breakfast" },
+    { key:"lunch",     label:"Lunch" },
+    { key:"dinner",    label:"Dinner" },
+    { key:"meal",      label:"Meal" },
+    { key:"snack",     label:"Snack" },
+    { key:"bedtime",   label:"Bedtime" },
+    { key:"overnight", label:"Overnight" },
+    { key:"formula",   label:"Formula" }
   ];
   let mealKey = null;          // selected meal/order (visual cue only)
   let mealAuto = false;        // true when defaulted (by product or time) vs. manually picked
@@ -1067,15 +1125,14 @@ const UI = (() => {
   function allParamsConfirmed(){ return paramsToConfirm().every(k => confirmed.has(k)); }
   function resetConfirmations(){ confirmed = new Set(); }
 
-  // Default the order by time of day. Windows per Clinical Standard Work; gaps = snack.
+  // Default the order by time of day, using the same windows as the icon resolver.
   function mealForTime(date){
-    const m = date.getHours()*60 + date.getMinutes();
-    const within = (h1,h2) => m >= h1*60 && m < h2*60;
-    if(within(7,9))   return "breakfast";
-    if(within(11,13)) return "lunch";
-    if(within(17,19)) return "dinner";
-    if(m >= 21*60 || m < 5*60) return "bedtime";   // 21:00–05:00 wraps midnight
-    return "snack";
+    if(inWindow(date, TW.BREAKFAST)) return "breakfast";
+    if(inWindow(date, TW.LUNCH))     return "lunch";
+    if(inWindow(date, TW.DINNER))    return "dinner";
+    if(inWindow(date, TW.BEDTIME))   return "bedtime";
+    if(inWindow(date, TW.OVERNIGHT)) return "overnight";
+    return "snack";                                 // gaps between windows = snack
   }
   // Dilute insulin is given in formula/milk to infants — Formula is the right cue at
   // any time of day. U-100 defaults by time of day (Formula still selectable manually).
@@ -1218,21 +1275,25 @@ const UI = (() => {
   function renderMeal(){
     const C = CDS_CONFIG.concentrations[params.conc];
     const co = correctionOnlyMode();
-    const m = MEALS.find(x => x.key === mealKey);   // default cue kept (icon only; ignored art)
+    const m = MEALS.find(x => x.key === mealKey);
+    const now = new Date();
+    const src = co ? ICON.clock : (m ? iconForMeal(m.key, now) : null);
+    const fits = co || !m || mealFitsClock(m.key, now);
+    const why = fits ? "" : ` — unexpected at ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}; verify this is the right MAR task`;
     // Correction-only is Q4H (clock), not a feed/meal. clock_216.png lives in the repo dir.
-    $("mealIcon").innerHTML = co
-      ? `<img src="clock_216.png" alt="">`
-      : m
-        ? `<img src="${m.icon}" alt="">`
-        : `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
+    $("mealIcon").innerHTML = src
+      ? `<img src="${src}" alt="${co ? "Correction only, every 4 hours" : (m.label + " order" + why)}" title="${co ? "" : (m.label + " order" + why)}">`
+      : `<svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>`;
+    $("mealIcon").classList.toggle("is-query", !fits);
     // card now shows the live medication order, not a meal picker
     $("mealLabel").textContent = C.orderName;
     $("mealSub").textContent = orderSig(C);
   }
   function buildMealGrid(){
+    const now = new Date();
     $("mealGrid").innerHTML = MEALS.map(m => `
       <button class="meal-opt" type="button" data-meal="${m.key}" aria-pressed="${m.key===mealKey}">
-        <span class="mo-icon"><img src="${m.icon}" alt=""></span>
+        <span class="mo-icon${mealFitsClock(m.key, now) ? "" : " is-query"}"><img src="${iconForMeal(m.key, now)}" alt=""></span>
         <span class="mo-label">${m.label}</span>
       </button>`).join("");
   }
@@ -1274,7 +1335,7 @@ const UI = (() => {
       : "";
     $("bgSub").innerHTML = (r.bgEntered != null && r.state === "DOSE")
       ? (r.correctionHeld
-          ? `Correction held — insulin on board <b>(would be ${fmt(r.correctionWithheld)} ${u})</b>`
+          ? `Insulin On Board: correction dose <b>WILL NOT</b> be included in total`
           : r.correctionFloored
             ? `BG ≤ target → <b>no correction</b>`
             : `Correction = (${fmt(r.bgUsedForCorrection)} − ${fmt(params.target)}) ÷ ${fmt(params.cf)} = <b>${fmt(r.correction)} ${u}</b>`)
@@ -1347,7 +1408,6 @@ const UI = (() => {
     panel.classList.add("is-safe");
     head.textContent = "Recommended dose";
     const bump = r.totalRounded !== r.totalUnrounded;
-    const incUnit = C.unit==='Units' ? 'unit' : 'Syr Unit';
     const co = r.correctionOnly;
     const components = co
       ? `${fmt(r.correction)} (correction) · no carb coverage`
@@ -1364,7 +1424,6 @@ const UI = (() => {
       <div class="dose-formula">
         ${components} = ${fmt(r.totalUnrounded)}
         ${bump ? ` → rounds to <b style="color:var(--teal-deep)">${fmt(r.totalRounded)}</b>` : ` (exact)`}
-        · increment ${fmt(params.increment)} ${incUnit}
       </div>
       ${r.correctionHeld ? `
       <div class="dose-note">${SVG.warn}<div>Correction component held to avoid stacking — rapid-acting insulin within the past 2&nbsp;h. Prandial (carb) coverage only.</div></div>` : ``}`;
@@ -1950,6 +2009,8 @@ const UI = (() => {
     $("inBg").addEventListener("blur", () => { capHint("bg"); renderSubcalcs(); });
     $("inIOB").addEventListener("change", () => { invalidateDose(); renderSubcalcs(); });
     $("calcBtn").addEventListener("click", calculateDose);
+    // The icon is a time-of-day cue, so it must age with the clock, not just with interaction.
+    setInterval(() => { renderMeal(); if($("mealScrim").classList.contains("open")) buildMealGrid(); }, 60000);
     // Tapping a parameter indicator is the RN's active confirmation of that ordered value.
     $("paramCard").addEventListener("click", e => {
       const b = e.target.closest("button[data-confirm]");
@@ -2020,13 +2081,6 @@ const UI = (() => {
       renderGauge("ic");
     });
 
-    // If launched with SMART params, surface it (no auto-auth in this build).
-    if(SmartLaunch.isSmartLaunch()){
-      const m = $("modeBanner");
-      m.querySelector("b").textContent = "SMART launch detected.";
-      m.querySelector("span:last-child").innerHTML =
-        "<b>SMART launch detected.</b> This build runs standalone; configure SmartLaunch + FhirParameterSource to go live.";
-    }
   }
 
   return { init };
