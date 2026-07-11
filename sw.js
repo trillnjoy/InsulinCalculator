@@ -42,7 +42,10 @@ const PRECACHE = [
   "./Formula_216.png",
   "./clock_216.png",
   "./INSULIN_CALC_HELP_CHLA.pdf",
-  "./DILUTE_INSULIN_CALC_HELP_CHLA.pdf"
+  "./DILUTE_INSULIN_CALC_HELP_CHLA.pdf",
+  // pdf.js — renders multi-page PDFs in-app (iOS iframes only ever show page 1).
+  "./pdf.min.mjs",
+  "./pdf.worker.min.mjs"
 ];
 
 self.addEventListener("install", event => {
