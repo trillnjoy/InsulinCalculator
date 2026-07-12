@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.12.5 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.12.6 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -323,6 +323,11 @@ body{
 .pdfv-doc.is-zoomed{text-align:left}
 .pdfv-doc.is-zoomed .pdfv-img{width:auto; max-width:none; cursor:zoom-out;}
 /* ---------- MAR task simulator (main screen) ---------- */
+.mar-sim.is-collapsed{display:none}
+.order-header{cursor:pointer}
+.confirm-left{order:2;flex:none;font-size:11px;font-weight:700;
+  letter-spacing:.04em;text-transform:none;color:var(--advisory);white-space:nowrap}
+.eyebrow::after{order:1}
 .mar-sim{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px 14px;margin:0 0 14px}
 .mar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .mar-row label{font-size:13px;font-weight:700;color:var(--ink);flex:0 0 78px}
@@ -438,7 +443,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
 <div class="wrap">
 
   <!-- ORDER / MEAL CONTEXT -->
-  <button class="order-header" id="mealTile" type="button" tabindex="-1" aria-label="Medication order detail">
+  <button class="order-header" id="mealTile" type="button" aria-expanded="false" aria-controls="marSim" aria-label="Show or hide the MAR task simulator">
     <span class="meal-icon" id="mealIcon" aria-hidden="true">
       <svg class="meal-ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
     </span>
@@ -450,7 +455,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
   </button>
 
   <!-- MAR TASK SIMULATOR (frequency × time of day) -->
-  <div class="mar-sim" id="marSim">
+  <div class="mar-sim is-collapsed" id="marSim">
     <div class="mar-row">
       <label for="setFreq">MAR task</label>
       <select id="setFreq" class="mar-select">
@@ -467,9 +472,8 @@ select.set-input{font-family:var(--sans);font-weight:500}
   </div>
 
   <!-- PARAMETERS -->
-  <div class="eyebrow">Parameters from order</div>
+  <div class="eyebrow">Parameters from order<span class="confirm-left" id="confirmLeft"></span></div>
   <div class="card" id="paramCard"></div>
-  <div class="confirm-gate" id="confirmGate"></div>
 
   <!-- PATIENT VALUES -->
   <div class="eyebrow">Enter patient values</div>
@@ -638,23 +642,6 @@ select.set-input{font-family:var(--sans);font-weight:500}
 </div>
 
 <!-- MEAL / ORDER PICKER -->
-<div class="scrim" id="mealScrim">
-  <div class="sheet" role="dialog" aria-modal="true" aria-label="Select meal or order">
-    <div class="sheet-head">
-      <h2>Which order?</h2>
-      <div class="spacer"></div>
-      <button class="iconbtn" id="btnCloseMeal" style="background:var(--paper);border-color:var(--line);color:var(--ink-soft)" aria-label="Close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
-    </div>
-    <div class="sheet-body">
-      <p class="meal-help">Choose the meal, snack, or bedtime order you are dosing. The icon appears top-left as a cue that the right order was selected. Changing the order requires re-confirming the order details below.</p>
-      <div class="meal-grid" id="mealGrid"></div>
-    </div>
-    <div style="height:8px"></div>
-  </div>
-</div>
-
 <div class="scrim" id="infoScrim">
   <div class="sheet" role="dialog" aria-modal="true" aria-label="Help and references">
     <div class="sheet-head">
@@ -1295,16 +1282,16 @@ const UI = (() => {
       el.disabled = !ok;
       if(!ok) el.value = "";
     });
-    const gate = $("confirmGate");
-    if(gate){
-      const left = paramsToConfirm().filter(k => !confirmed.has(k)).length;
-      gate.style.display = ok ? "none" : "";
-      gate.textContent = `Confirm each ordered parameter above (tap ${SYM_TAP}) to enable carb and blood-glucose entry — ${left} remaining.`;
+    // Remaining-to-confirm count rides in the section header, not a separate banner.
+    const left = paramsToConfirm().filter(k => !confirmed.has(k)).length;
+    const tag = $("confirmLeft");
+    if(tag){
+      tag.textContent = left ? `${left} remaining` : "";
+      tag.style.display = left ? "" : "none";
     }
     if(!ok){ doseShown = false; }
     recompute();
   }
-  const SYM_TAP = "✓ / ⚠";
 
   // Correction-only orders carry no carbohydrate coverage, so the carb entry is
   // removed entirely (not just ignored). BG alone drives the dose.
@@ -1368,24 +1355,6 @@ const UI = (() => {
     $("mealLabel").textContent = C.orderName;
     $("mealSub").textContent = orderSig(C);
   }
-  function buildMealGrid(){
-    const now = nowDate();
-    $("mealGrid").innerHTML = MEALS.map(m => `
-      <button class="meal-opt" type="button" data-meal="${m.key}" aria-pressed="${m.key===mealKey}">
-        <span class="mo-icon${mealFitsClock(m.key, now) ? "" : " is-query"}"><img src="${iconForMeal(m.key, now)}" alt=""></span>
-        <span class="mo-label">${m.label}</span>
-      </button>`).join("");
-  }
-  function openMealSheet(){ buildMealGrid(); $("mealScrim").classList.add("open"); }
-  function closeMealSheet(){ $("mealScrim").classList.remove("open"); }
-  function selectMeal(key){
-    mealKey = key;
-    mealAuto = false;                 // an explicit pick locks the MAR task
-    const sel = $("setFreq"); if(sel) sel.value = key;
-    renderMeal();
-    closeMealSheet();
-  }
-
   /* ---- recompute (gate) + sub-calc previews (commit on blur) ---- */
   let doseShown = false;
   // Correction-only regimen = U-10 with ICR absent (the sim mirror of the
@@ -2056,12 +2025,6 @@ const UI = (() => {
 
     // meal / order picker
     // (order card is display-only — meal picker retired; default cue kept for the icon)
-    $("btnCloseMeal").addEventListener("click", closeMealSheet);
-    $("mealScrim").addEventListener("click", e => { if(e.target === $("mealScrim")) closeMealSheet(); });
-    $("mealGrid").addEventListener("click", e => {
-      const b = e.target.closest(".meal-opt"); if(!b) return;
-      selectMeal(b.dataset.meal);
-    });
 
     // reconcile-and-proceed: acknowledge a prescriber-verified off-tier target
     $("dosePanel").addEventListener("change", e => {
@@ -2089,6 +2052,13 @@ const UI = (() => {
     $("inBg").addEventListener("blur", () => { capHint("bg"); renderSubcalcs(); });
     $("inIOB").addEventListener("change", () => { invalidateDose(); renderSubcalcs(); });
     $("calcBtn").addEventListener("click", calculateDose);
+    // The order tile toggles the MAR-task simulator (frequency × time of day).
+    $("mealTile").addEventListener("click", () => {
+      const panel = $("marSim");
+      const open = panel.classList.toggle("is-collapsed") === false;
+      $("mealTile").setAttribute("aria-expanded", open ? "true" : "false");
+      if(open) paintClock();
+    });
 
     /* ---- Test controls: lockable frequency + simulated clock ---- */
     const freqSel = $("setFreq");
@@ -2111,18 +2081,15 @@ const UI = (() => {
     clockRange.addEventListener("input", e => {
       simClock = parseInt(e.target.value, 10);
       renderMeal(); paintClock();
-      if($("mealScrim").classList.contains("open")) buildMealGrid();
     });
     $("btnLiveClock").addEventListener("click", () => {
       simClock = null; renderMeal(); paintClock();
-      if($("mealScrim").classList.contains("open")) buildMealGrid();
     });
     paintClock();
     // The icon is a time-of-day cue, so it must age with the real clock too.
     setInterval(() => {
       if(isSimClock()) return;                 // don't fight a spoofed clock
       renderMeal(); paintClock();
-      if($("mealScrim").classList.contains("open")) buildMealGrid();
     }, 60000);
     // Tapping a parameter indicator is the RN's active confirmation of that ordered value.
     $("paramCard").addEventListener("click", e => {
@@ -2165,7 +2132,7 @@ const UI = (() => {
       b.setAttribute("aria-expanded", open ? "true" : "false");
     }));
     $("scrim").addEventListener("click", e => { if(e.target === $("scrim")) closeSheet(); });
-    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeDoc(); closeSheet(); closeMealSheet(); closeInfoSheet(); } });
+    document.addEventListener("keydown", e => { if(e.key === "Escape"){ closeDoc(); closeSheet(); closeInfoSheet(); } });
 
     $("setConc").addEventListener("change", () => { $("setRound").dataset.val=""; syncConcDependent(); applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
     $("setAge").addEventListener("change", () => { applyBandDefaults($("setConc").value, $("setAge").value); refreshSetNotes(); revalidateAll(); });
