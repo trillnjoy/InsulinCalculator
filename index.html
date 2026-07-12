@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.12.6 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.13.1 (release 1.13) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -131,8 +131,7 @@ body{
   border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;color:var(--ink-faint);
 }
 .meal-icon img{width:100%;height:100%;object-fit:contain}
-.meal-icon.is-query{box-shadow:0 0 0 2px var(--advisory)}
-.meal-opt .mo-icon.is-query{box-shadow:0 0 0 2px var(--advisory)}
+.meal-icon.is-query{box-shadow:0 0 0 3px #F5C518, 0 0 0 5px rgba(245,197,24,.30);border-radius:12px}
 .meal-icon .meal-ph{width:24px;height:24px}
 .meal-meta{flex:1;min-width:0}
 .meal-label{display:block;font-size:16px;font-weight:650;color:var(--ink)}
@@ -144,16 +143,16 @@ body{
    Unconfirmed = dithered (muted, grayscale, dashed ring) → "you have not owned this yet".
    Tapping confirms: full color, solid ring. The caution TEXT stays fully legible either
    way, so muting the icon never mutes the warning. */
+.badge .st-img{width:24px;height:24px;object-fit:contain;display:block}
+.badge.entry-badge{border-color:transparent}
 .badge.confirmable{padding:0;border-style:dashed;border-color:var(--line-strong);
   background:transparent;cursor:pointer;-webkit-tap-highlight-color:transparent;
-  opacity:.45;filter:grayscale(1);transition:opacity .12s,filter .12s,border-color .12s;}
+  transition:border-color .12s,box-shadow .12s;}
+.badge.confirmable.is-confirmed{border-style:solid;border-color:transparent}
+/* an unvalidated caution still needs to read as unvalidated → keep the dashed ring */
+.badge.confirmable.st-caution{border-color:#E8B93B}
+.badge.confirmable.st-x{border-color:var(--stop)}
 .badge.confirmable:active{transform:scale(.94)}
-.badge.confirmable.is-confirmed{opacity:1;filter:none;border-style:solid;border-color:currentColor;}
-.badge.confirmable.badge-ok.is-confirmed{color:var(--safe);border-color:var(--safe)}
-.badge.confirmable.badge-caution.is-confirmed{color:var(--advisory);border-color:var(--advisory)}
-.confirm-gate{margin:8px 2px 0;padding:9px 12px;border-radius:9px;
-  background:#FBF3DF;border:1px solid #E4C766;color:#7A5B10;
-  font-size:12.5px;line-height:1.45;font-weight:600}
 .badge{width:34px;height:34px;flex:none;display:grid;place-items:center;line-height:0;box-sizing:border-box;border:1.5px solid transparent;border-radius:50%}
 .badge svg{width:20px;height:20px;display:block}
 .badge-ok svg{color:var(--safe)}
@@ -494,6 +493,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
           <div class="name">Carbohydrates eaten</div>
           <div class="hint" id="carbHint"></div>
         </div>
+        <span class="badge entry-badge" id="carbBadge" role="img" aria-label=""></span>
         <div class="field">
           <input id="inCarbs" type="number" inputmode="decimal" min="0" step="1" placeholder="0" aria-label="Carbohydrates eaten in grams">
           <span class="unit">g</span>
@@ -507,6 +507,7 @@ select.set-input{font-family:var(--sans);font-weight:500}
           <div class="name">Current blood glucose</div>
           <div class="hint" id="bgHint"></div>
         </div>
+        <span class="badge entry-badge" id="bgBadge" role="img" aria-label=""></span>
         <div class="field">
           <input id="inBg" type="number" inputmode="decimal" min="1" max="2000" step="1" placeholder="" aria-label="Current blood glucose in mg per dL">
           <span class="unit">mg/dL</span>
@@ -1204,6 +1205,81 @@ const UI = (() => {
     return conc === "U10" ? "formula" : mealForTime(date);
   }
 
+  /* ---- Shared visual vocabulary (the MPage icon set) --------------------------------
+     The same five glyphs the EHR calculator and other MPages use, so the sim teaches the
+     real thing rather than a lookalike:
+       grey check   — loaded from the order, in range, NOT yet validated by the RN
+       green check  — in range and validated (or a valid entered value)
+       caution      — outside the age Rule band (soft advisory) / past a calculation cap
+       red X        — outside the hard field limit (should be unreachable; entries snap)
+       hypo         — BG below the hypoglycemia threshold: dosing suppressed, rescue */
+  const STATE_ICON = {
+    grey:   "grey_check_32.gif",
+    green:  "green_check.gif",
+    caution:"yellow_caution_32.gif",
+    x:      "red_x_32.gif",
+    hypo:   "BG_Low_32.png"
+  };
+  const STATE_ARIA = {
+    grey:   "Loaded from order — tap to validate",
+    green:  "Validated",
+    caution:"Caution — verify",
+    x:      "Invalid — outside the allowed range",
+    hypo:   "Hypoglycemia — dosing suppressed"
+  };
+  const stateImg = st =>
+    `<img src="${STATE_ICON[st]}" alt="" class="st-img">`;
+
+  /* Ordered parameter (ICR / CF / Target BG):
+       red X   → beyond the hard Min/Max (theoretical: order entry snaps, so should not occur)
+       caution → below Low Rule or above Hi Rule
+       green   → in range AND validated;  grey → in range, awaiting validation */
+  function paramIconState(key){
+    const C = CDS_CONFIG.concentrations[params.conc];
+    const v = params[key];
+    if(key === "ic" && v == null) return "green";      // correction-only: nothing to own
+    if(v == null) return "grey";
+    const hard = (key === "target") ? C.targetOrder : C[key];
+    if(hard && (v < hard.min || v > hard.max)) return "x";
+    const N = nestFor(params.conc, key, params.ageBand);
+    if(N && (v < N.lowRule || v > N.hiRule)) return "caution";
+    return confirmed.has(key) ? "green" : "grey";
+  }
+
+  /* Carbohydrates eaten:
+       grey    → empty
+       green   → up to the calculation cap
+       caution → between the calc cap and the field max (computes at the cap)
+       red X   → beyond the field max (snaps on blur, so may only flash) */
+  function carbsIconState(){
+    const raw = $("inCarbs") ? $("inCarbs").value.trim() : "";
+    if(raw === "") return "grey";
+    const v = parseFloat(raw);
+    if(isNaN(v)) return "grey";
+    const c = CDS_CONFIG.concentrations[params.conc].carb;
+    if(v < c.entryMin || v > c.entryMax) return "x";
+    if(v > c.formulaCap) return "caution";
+    return "green";
+  }
+
+  /* Current blood glucose:
+       grey    → empty
+       red X   → outside the hard entry range (snaps on blur)
+       hypo    → at/below the hypoglycemia threshold — dosing suppressed, rescue guidance
+       caution → above the correction cap (correction computes at the cap)
+       green   → a normal, calculable value */
+  function bgIconState(){
+    const raw = $("inBg") ? $("inBg").value.trim() : "";
+    if(raw === "") return "grey";
+    const v = parseFloat(raw);
+    if(isNaN(v)) return "grey";
+    const b = CDS_CONFIG.bg;
+    if(v < b.entryMin || v > b.entryMax) return "x";
+    if(v < b.hypoThreshold) return "hypo";
+    if(v > b.formulaCap) return "caution";
+    return "green";
+  }
+
   const SVG = {
     check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" class="check"><path d="M20 6 9 17l-5-5"/></svg>',
     yield:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--advisory)" d="M13.73 4.06 22.2 18.5a2 2 0 0 1-1.73 3H3.53a2 2 0 0 1-1.73-3L10.27 4.06a2 2 0 0 1 3.46 0z"/><path stroke="#fff" stroke-width="2.2" stroke-linecap="round" d="M12 9.5v4.2"/><circle cx="12" cy="17.4" r="1.15" fill="#fff"/></svg>',
@@ -1241,18 +1317,16 @@ const UI = (() => {
     }
     $("paramCard").innerHTML = rows.map(r => {
       const st = paramState(r.key);
-      const badge = st.state === "caution" ? SVG.yield
-                  : st.state === "error"   ? SVG.x
-                  :                          SVG.check;
-      // Rounding is a formatting choice, not an ordered clinical parameter — static indicator.
+      // Rounding is a formatting choice, not an ordered clinical parameter — static green check.
       const needsConfirm = paramsToConfirm().includes(r.key);
+      const ist = needsConfirm ? paramIconState(r.key) : "green";
       const isOn = confirmed.has(r.key);
       const ind = needsConfirm
-        ? `<button type="button" class="badge badge-${st.state} confirmable${isOn?" is-confirmed":""}"
+        ? `<button type="button" class="badge st-${ist} confirmable${isOn?" is-confirmed":""}"
              data-confirm="${r.key}" aria-pressed="${isOn?"true":"false"}"
-             aria-label="${isOn ? "Confirmed" : "Tap to confirm"} — ${st.aria}"
-             title="${isOn ? "Confirmed" : "Tap to confirm this ordered value"}">${badge}</button>`
-        : `<span class="badge badge-${st.state}" role="img" aria-label="${st.aria}">${badge}</span>`;
+             aria-label="${isOn ? "Validated" : "Tap to validate"} — ${STATE_ARIA[ist]}"
+             title="${isOn ? "Validated" : "Tap to validate this ordered value"}">${stateImg(ist)}</button>`
+        : `<span class="badge st-${ist}" role="img" aria-label="${STATE_ARIA[ist]}">${stateImg(ist)}</span>`;
       return `
       <div class="param${st.state==='ok'?'':' flag-'+st.state}">
         <div class="meta">
@@ -1275,6 +1349,18 @@ const UI = (() => {
   // Entry is disabled until every ordered parameter is confirmed — this is the job-aid
   // behavior ("not enabled for input of carbs eaten or measured blood glucose until all
   // above parameters are confirmed"). Calculate is gated transitively via bothEntered().
+  // Entry-field indicators (carbs, BG) — repainted on every keystroke/recompute.
+  function renderEntryBadges(){
+    const set = (id, st) => {
+      const el = $(id); if(!el) return;
+      el.className = `badge entry-badge st-${st}`;
+      el.innerHTML = stateImg(st);
+      el.setAttribute("aria-label", STATE_ARIA[st]);
+    };
+    set("carbBadge", correctionOnlyMode() ? "green" : carbsIconState());
+    set("bgBadge", bgIconState());
+  }
+
   function applyConfirmGate(){
     const ok = allParamsConfirmed();
     ["inCarbs","inBg"].forEach(id => {
@@ -1394,6 +1480,7 @@ const UI = (() => {
   // Gate only: Calculate button state + the total dose panel. Updates live (so the
   // button enables and a stale dose hides immediately) but never renders sub-calcs.
   function recompute(){
+    renderEntryBadges();
     const r = computeCurrent();
     const C = CDS_CONFIG.concentrations[params.conc];
     const ready = bothEntered();
@@ -2030,26 +2117,38 @@ const UI = (() => {
     $("dosePanel").addEventListener("change", e => {
     });
 
+    // Clamp on BLUR, not on input. Clamping while typing made an out-of-range entry
+    // impossible to see, so the red-X state could never render — not even as a flash.
+    // The engine independently caps carbs at formulaCap and BG at 600, so an out-of-range
+    // value in the field between keystroke and blur can never reach the dose math.
     $("inCarbs").addEventListener("input", function(){
-      const max = CDS_CONFIG.concentrations[params.conc].carb.entryMax;   // clamp like BG
-      if(this.value !== "" && parseFloat(this.value) > max) this.value = max;
       $("carbSub").innerHTML = "";   // no partial preview while typing
       capHint("carbs");
       invalidateDose();
     });
-    $("inCarbs").addEventListener("blur", () => { capHint("carbs"); renderSubcalcs(); });
+    $("inCarbs").addEventListener("blur", function(){
+      const c = CDS_CONFIG.concentrations[params.conc].carb;
+      if(this.value !== ""){
+        const v = parseFloat(this.value);
+        if(v > c.entryMax) this.value = c.entryMax;
+        else if(v < c.entryMin) this.value = c.entryMin;
+      }
+      capHint("carbs"); invalidateDose(); renderSubcalcs();
+    });
     $("inBg").addEventListener("input", function(){
+      $("bgSub").innerHTML = "";   // no partial preview while typing
+      capHint("bg");          // >formulaCap amber notice live, not only on blur
+      invalidateDose();
+    });
+    $("inBg").addEventListener("blur", function(){
       const BG = CDS_CONFIG.bg;
       if(this.value !== ""){
         const v = parseFloat(this.value);
         if(v > BG.entryMax) this.value = BG.entryMax;          // ceiling clamp
         else if(v < BG.entryMin) this.value = BG.entryMin;     // floor clamp — prevents 0
       }
-      $("bgSub").innerHTML = "";   // no partial preview while typing
-      capHint("bg");          // >formulaCap amber notice live, not only on blur
-      invalidateDose();
+      capHint("bg"); invalidateDose(); renderSubcalcs();
     });
-    $("inBg").addEventListener("blur", () => { capHint("bg"); renderSubcalcs(); });
     $("inIOB").addEventListener("change", () => { invalidateDose(); renderSubcalcs(); });
     $("calcBtn").addEventListener("click", calculateDose);
     // The order tile toggles the MAR-task simulator (frequency × time of day).
