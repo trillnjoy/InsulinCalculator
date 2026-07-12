@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.12.4 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.12.5 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -1095,16 +1095,30 @@ const UI = (() => {
   }
   function isSimClock(){ return simClock != null; }
 
-  const TW = {                        // [startHour, endHour) — NIGHT/OVERNIGHT wrap midnight
-    BREAKFAST:[7,9], LUNCH:[11,13], DINNER:[17,19], BEDTIME:[20,23], OVERNIGHT:[23,7],
-    NIGHT:[20,5]                      // any daytime order picked in here is suspect
+  /* ---- Order frequency × time of day → icon + plausibility ring -----------------------
+     Two independent signals:
+       ICON = what task this is. Breakfast stays breakfast — the glyph is the task's identity.
+              The query icons substitute only where the task is not credible AT ALL: sun+? = a
+              daytime task picked at night, moon+? = a night task picked at the wrong hour.
+       RING = amber when the task is off its designated window but still shown as itself.
+     Windows: Breakfast 07–09 · Lunch 11–13 · Dinner 17–19 · Bedtime 20–23 · Overnight 23–07.
+     Snack runs 05:00–23:00 (a snack after the 20:30 bedtime dose is normal) but rings amber
+     inside a meal window, where the meal task is the likelier pick.
+     Generic "Meal" resolves to the NEAREST meal by clock distance, ties to the earlier meal
+     (10:00 → breakfast, 15:00 → lunch), and rings amber when outside that meal's window —
+     10:00 is a late breakfast or an early lunch, and outside both windows either way. */
+  const MEAL_W = { breakfast:[7,9], lunch:[11,13], dinner:[17,19] };
+  const TW = {
+    BEDTIME:[20,23], OVERNIGHT:[23,7],
+    NIGHT:[20,5],                     // daytime tasks are not credible in here…
+    SNACK:[5,23]                      // …except Snack, which runs to 23:00
   };
   const ICON = {
     breakfast:"Breakfast_216.png", lunch:"Lunch_216.png", dinner:"Dinner_216.png",
     snack:"Snack_216.png", bedtime:"Bedtime_216.png", overnight:"Overnight.png",
     formula:"Formula_216.png",
-    nightQuery:"Overnight_Q.png",     // night order at the wrong hour (moon + ?)
-    dayQuery:"Daytime_Q.png",         // daytime order picked at night (sun + ?)
+    nightQuery:"Overnight_Q.png",     // night task at the wrong hour (moon + ?)
+    dayQuery:"Daytime_Q.png",         // daytime task picked at night (sun + ?)
     clock:"clock_216.png"
   };
   const minsOf = d => d.getHours()*60 + d.getMinutes();
@@ -1112,38 +1126,52 @@ const UI = (() => {
     const m = minsOf(d), a = h1*60, b = h2*60;
     return (a <= b) ? (m >= a && m < b) : (m >= a || m < b);   // wraps midnight
   }
-  // Generic "Meal" has no clock of its own — resolve it to the meal period we're actually in.
-  function mealPeriod(d){
-    const m = minsOf(d);
-    if(m >= 5*60  && m < 11*60) return "breakfast";
-    if(m >= 11*60 && m < 16*60) return "lunch";
-    if(m >= 16*60 && m < 20*60) return "dinner";
-    return null;                       // 20:00–04:59 → not a meal period (night)
+  const inAnyMeal = d => Object.values(MEAL_W).some(w => inWindow(d, w));
+  // Minutes from now to a window (0 when inside). Meal windows never wrap midnight.
+  // No +1 fudge on the trailing edge: 10:00 must sit exactly 60 min from breakfast's 09:00 end
+  // and 60 min from lunch's 11:00 start, so the tie can resolve to the earlier meal.
+  function distToWindow(d, [h1,h2]){
+    const m = minsOf(d), a = h1*60, b = h2*60;
+    if(m >= a && m < b) return 0;
+    return (m < a) ? (a - m) : (m - b);
   }
-  // Daytime orders — plausible 05:00–20:00, suspect at night.
-  const DAY_ORDERS = ["breakfast","lunch","dinner","meal","snack"];
+  // Nearest meal by clock distance; iteration order breaks ties toward the earlier meal.
+  function nearestMeal(d){
+    let best = null, bestDist = Infinity;
+    for(const k of ["breakfast","lunch","dinner"]){
+      const dist = distToWindow(d, MEAL_W[k]);
+      if(dist < bestDist){ best = k; bestDist = dist; }
+    }
+    return best;
+  }
   function iconForMeal(key, date){
     const d = date || nowDate();
-    // Formula is exempt: dilute feeds run around the clock, so an overnight feed is expected,
-    // not an error. Flagging it would fire on the commonest dilute case (alert fatigue).
-    if(DAY_ORDERS.includes(key) && inWindow(d, TW.NIGHT)) return ICON.dayQuery;
     switch(key){
-      case "breakfast": case "lunch": case "dinner":   // frequency names the time — always itself
-      case "snack":                                    // legitimate at any daytime hour
-      case "formula": return ICON[key];
-      case "meal":      return ICON[mealPeriod(d)] || ICON.dayQuery;
+      // Formula is exempt: dilute feeds run around the clock, so an overnight feed is expected.
+      case "formula":   return ICON.formula;
       case "bedtime":   return inWindow(d, TW.BEDTIME)   ? ICON.bedtime   : ICON.nightQuery;
       case "overnight": return inWindow(d, TW.OVERNIGHT) ? ICON.overnight : ICON.nightQuery;
+      case "snack":     return inWindow(d, TW.SNACK)     ? ICON.snack     : ICON.dayQuery;
+      case "meal":      return inWindow(d, TW.NIGHT) ? ICON.dayQuery : ICON[nearestMeal(d)];
+      case "breakfast": case "lunch": case "dinner":
+        return inWindow(d, TW.NIGHT) ? ICON.dayQuery : ICON[key];   // keeps its own identity
       default: return null;
     }
   }
-  // Does the picked task fit the clock? Drives the alt/label text so the cue is not icon-only.
+  // True = task fits the clock (no amber ring).
   function mealFitsClock(key, date){
     const d = date || nowDate();
-    if(DAY_ORDERS.includes(key)) return !inWindow(d, TW.NIGHT);
-    if(key === "bedtime")   return inWindow(d, TW.BEDTIME);
-    if(key === "overnight") return inWindow(d, TW.OVERNIGHT);
-    return true;                       // formula, correction-only: around the clock
+    switch(key){
+      case "formula":   return true;                        // around the clock
+      case "bedtime":   return inWindow(d, TW.BEDTIME);
+      case "overnight": return inWindow(d, TW.OVERNIGHT);
+      // Snack is fine 05:00–23:00, but inside a meal window the meal task is the likelier pick.
+      case "snack":     return inWindow(d, TW.SNACK) && !inAnyMeal(d);
+      case "meal":      return !inWindow(d, TW.NIGHT) && distToWindow(d, MEAL_W[nearestMeal(d)]) === 0;
+      case "breakfast": case "lunch": case "dinner":
+        return inWindow(d, MEAL_W[key]);                    // only inside its own window
+      default: return true;
+    }
   }
 
   const MEALS = [
@@ -1176,11 +1204,11 @@ const UI = (() => {
 
   // Default the order by time of day, using the same windows as the icon resolver.
   function mealForTime(date){
-    if(inWindow(date, TW.BREAKFAST)) return "breakfast";
-    if(inWindow(date, TW.LUNCH))     return "lunch";
-    if(inWindow(date, TW.DINNER))    return "dinner";
-    if(inWindow(date, TW.BEDTIME))   return "bedtime";
-    if(inWindow(date, TW.OVERNIGHT)) return "overnight";
+    if(inWindow(date, MEAL_W.breakfast)) return "breakfast";
+    if(inWindow(date, MEAL_W.lunch))     return "lunch";
+    if(inWindow(date, MEAL_W.dinner))    return "dinner";
+    if(inWindow(date, TW.BEDTIME))       return "bedtime";
+    if(inWindow(date, TW.OVERNIGHT))     return "overnight";
     return "snack";                                 // gaps between windows = snack
   }
   // Dilute insulin is given in formula/milk to infants — Formula is the right cue at
