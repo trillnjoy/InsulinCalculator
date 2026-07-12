@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.12.2 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.12.4 (release 1.12) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -322,6 +322,25 @@ body{
   border-radius:3px; box-shadow:0 2px 10px rgba(0,0,0,.35); cursor:zoom-in;}
 .pdfv-doc.is-zoomed{text-align:left}
 .pdfv-doc.is-zoomed .pdfv-img{width:auto; max-width:none; cursor:zoom-out;}
+/* ---------- MAR task simulator (main screen) ---------- */
+.mar-sim{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px 14px;margin:0 0 14px}
+.mar-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.mar-row label{font-size:13px;font-weight:700;color:var(--ink);flex:0 0 78px}
+.mar-select{flex:1;min-height:40px;font-size:16px;padding:7px 10px;border:1px solid var(--line-strong);
+  border-radius:9px;background:#fff;color:var(--ink);-webkit-appearance:none;appearance:none}
+.mar-note{font-size:11.5px;color:var(--ink-soft);line-height:1.4;margin-top:6px}
+/* ---------- Sim clock / frequency test controls ---------- */
+.clock-live{border:1px solid var(--line-strong);background:#fff;color:var(--teal-deep);
+  font-size:12px;font-weight:700;padding:5px 10px;border-radius:7px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent}
+.clock-live[disabled]{opacity:.4;cursor:default}
+.clock-range{width:100%;margin:8px 0 2px}
+.clock-read{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:15px;font-weight:700;
+  color:var(--teal-deep);display:flex;align-items:center;gap:8px}
+.clock-read .live{font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--safe)}
+.clock-read .sim{font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--advisory)}
 /* ---------- Modal ---------- */
 .scrim{
   position:fixed;inset:0;background:rgba(16,36,44,.42);backdrop-filter:blur(2px);
@@ -429,6 +448,23 @@ select.set-input{font-family:var(--sans);font-weight:500}
     </span>
     <svg class="meal-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
   </button>
+
+  <!-- MAR TASK SIMULATOR (frequency × time of day) -->
+  <div class="mar-sim" id="marSim">
+    <div class="mar-row">
+      <label for="setFreq">MAR task</label>
+      <select id="setFreq" class="mar-select">
+        <option value="auto">Auto — follow clock</option>
+      </select>
+    </div>
+    <div class="mar-row">
+      <label for="setClock">Time of day</label>
+      <span class="clock-read" id="clockRead"></span>
+      <button type="button" class="clock-live" id="btnLiveClock">Live</button>
+    </div>
+    <input type="range" id="setClock" class="clock-range" min="0" max="1439" step="15" aria-label="Simulated time of day">
+    <div class="mar-note">Simulates picking a task off the MAR at a given hour. Drives the order icon only — never the dose math.</div>
+  </div>
 
   <!-- PARAMETERS -->
   <div class="eyebrow">Parameters from order</div>
@@ -1046,6 +1082,19 @@ const UI = (() => {
      the current hour, and when the selected task doesn't fit the clock we show the query icon
      rather than silently confirming a probable mis-pick.
      Windows are the same ones the app already defaults by (Clinical Standard Work). */
+  /* ---- Clock source (sim-testable) ----
+     Every time-of-day decision reads nowDate(), never `new Date()` directly, so the Settings
+     sheet can spoof the hour and let the whole frequency × time-of-day icon matrix be walked
+     without waiting for the actual clock. simClock === null means the live clock. */
+  let simClock = null;                 // minutes past midnight, or null for live
+  function nowDate(){
+    if(simClock == null) return new Date();
+    const d = new Date();
+    d.setHours(Math.floor(simClock / 60), simClock % 60, 0, 0);
+    return d;
+  }
+  function isSimClock(){ return simClock != null; }
+
   const TW = {                        // [startHour, endHour) — NIGHT/OVERNIGHT wrap midnight
     BREAKFAST:[7,9], LUNCH:[11,13], DINNER:[17,19], BEDTIME:[20,23], OVERNIGHT:[23,7],
     NIGHT:[20,5]                      // any daytime order picked in here is suspect
@@ -1074,7 +1123,7 @@ const UI = (() => {
   // Daytime orders — plausible 05:00–20:00, suspect at night.
   const DAY_ORDERS = ["breakfast","lunch","dinner","meal","snack"];
   function iconForMeal(key, date){
-    const d = date || new Date();
+    const d = date || nowDate();
     // Formula is exempt: dilute feeds run around the clock, so an overnight feed is expected,
     // not an error. Flagging it would fire on the commonest dilute case (alert fatigue).
     if(DAY_ORDERS.includes(key) && inWindow(d, TW.NIGHT)) return ICON.dayQuery;
@@ -1090,7 +1139,7 @@ const UI = (() => {
   }
   // Does the picked task fit the clock? Drives the alt/label text so the cue is not icon-only.
   function mealFitsClock(key, date){
-    const d = date || new Date();
+    const d = date || nowDate();
     if(DAY_ORDERS.includes(key)) return !inWindow(d, TW.NIGHT);
     if(key === "bedtime")   return inWindow(d, TW.BEDTIME);
     if(key === "overnight") return inWindow(d, TW.OVERNIGHT);
@@ -1275,8 +1324,10 @@ const UI = (() => {
   function renderMeal(){
     const C = CDS_CONFIG.concentrations[params.conc];
     const co = correctionOnlyMode();
+    const now = nowDate();
+    // Auto tracks the clock (real or simulated); an explicit pick locks the MAR task.
+    if(mealAuto) mealKey = defaultMeal(params.conc, now);
     const m = MEALS.find(x => x.key === mealKey);
-    const now = new Date();
     const src = co ? ICON.clock : (m ? iconForMeal(m.key, now) : null);
     const fits = co || !m || mealFitsClock(m.key, now);
     const why = fits ? "" : ` — unexpected at ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}; verify this is the right MAR task`;
@@ -1290,7 +1341,7 @@ const UI = (() => {
     $("mealSub").textContent = orderSig(C);
   }
   function buildMealGrid(){
-    const now = new Date();
+    const now = nowDate();
     $("mealGrid").innerHTML = MEALS.map(m => `
       <button class="meal-opt" type="button" data-meal="${m.key}" aria-pressed="${m.key===mealKey}">
         <span class="mo-icon${mealFitsClock(m.key, now) ? "" : " is-query"}"><img src="${iconForMeal(m.key, now)}" alt=""></span>
@@ -1301,7 +1352,8 @@ const UI = (() => {
   function closeMealSheet(){ $("mealScrim").classList.remove("open"); }
   function selectMeal(key){
     mealKey = key;
-    mealAuto = false;
+    mealAuto = false;                 // an explicit pick locks the MAR task
+    const sel = $("setFreq"); if(sel) sel.value = key;
     renderMeal();
     closeMealSheet();
   }
@@ -1876,7 +1928,7 @@ const UI = (() => {
     Hooks.emit("parametersSaved", params);
     resetConfirmations();   // a changed order must be re-confirmed parameter by parameter
     // Switching to dilute (or back to U-100) re-defaults the order cue.
-    if(concChanged){ mealKey = defaultMeal(conc, new Date()); mealAuto = true; }
+    if(concChanged){ mealKey = defaultMeal(conc, nowDate()); mealAuto = true; }
     renderMeal();        // order sig depends on ic/cf/target/increment — refresh every save
     renderParams();
     // Save has committed (line above). Soft advisories / boundary corrections are non-blocking
@@ -1968,7 +2020,7 @@ const UI = (() => {
 
   /* ---------------- wire up ---------------- */
   function init(){
-    mealKey = defaultMeal(params.conc, new Date()); mealAuto = true;
+    mealKey = defaultMeal(params.conc, nowDate()); mealAuto = true;
     renderMeal();
     renderParams();
     renderDeployNotes();
@@ -2009,8 +2061,41 @@ const UI = (() => {
     $("inBg").addEventListener("blur", () => { capHint("bg"); renderSubcalcs(); });
     $("inIOB").addEventListener("change", () => { invalidateDose(); renderSubcalcs(); });
     $("calcBtn").addEventListener("click", calculateDose);
-    // The icon is a time-of-day cue, so it must age with the clock, not just with interaction.
-    setInterval(() => { renderMeal(); if($("mealScrim").classList.contains("open")) buildMealGrid(); }, 60000);
+
+    /* ---- Test controls: lockable frequency + simulated clock ---- */
+    const freqSel = $("setFreq");
+    MEALS.forEach(m => freqSel.insertAdjacentHTML("beforeend",
+      `<option value="${m.key}">${m.label}</option>`));
+    freqSel.addEventListener("change", e => {
+      if(e.target.value === "auto"){ mealAuto = true; }
+      else { mealAuto = false; mealKey = e.target.value; }
+      renderMeal();
+    });
+    const clockRange = $("setClock");
+    function paintClock(){
+      const d = nowDate();
+      const hh = String(d.getHours()).padStart(2,"0"), mm = String(d.getMinutes()).padStart(2,"0");
+      $("clockRead").innerHTML = `${hh}:${mm} <span class="${isSimClock() ? "sim" : "live"}">${isSimClock() ? "simulated" : "live"}</span>`;
+      $("btnLiveClock").disabled = !isSimClock();
+      clockRange.value = d.getHours()*60 + d.getMinutes();
+      freqSel.value = mealAuto ? "auto" : (mealKey || "auto");
+    }
+    clockRange.addEventListener("input", e => {
+      simClock = parseInt(e.target.value, 10);
+      renderMeal(); paintClock();
+      if($("mealScrim").classList.contains("open")) buildMealGrid();
+    });
+    $("btnLiveClock").addEventListener("click", () => {
+      simClock = null; renderMeal(); paintClock();
+      if($("mealScrim").classList.contains("open")) buildMealGrid();
+    });
+    paintClock();
+    // The icon is a time-of-day cue, so it must age with the real clock too.
+    setInterval(() => {
+      if(isSimClock()) return;                 // don't fight a spoofed clock
+      renderMeal(); paintClock();
+      if($("mealScrim").classList.contains("open")) buildMealGrid();
+    }, 60000);
     // Tapping a parameter indicator is the RN's active confirmation of that ordered value.
     $("paramCard").addEventListener("click", e => {
       const b = e.target.closest("button[data-confirm]");
@@ -2097,7 +2182,9 @@ if("serviceWorker" in navigator){
     try{
       await navigator.serviceWorker.register("sw.js");
       navigator.serviceWorker.addEventListener("message", ev => {
-        if(ev.data && ev.data.type === "VERSION") showBuildTag(ev.data.release || ev.data.version, ev.data.version);
+        // show the FULL version (v1.12.3), not just the release (1.12) — otherwise every
+        // patch in a release looks identical in the footer and you cannot tell what shipped.
+        if(ev.data && ev.data.type === "VERSION") showBuildTag(ev.data.version || ev.data.release, ev.data.version);
       });
       const askVersion = () => navigator.serviceWorker.controller &&
         navigator.serviceWorker.controller.postMessage("GET_VERSION");
