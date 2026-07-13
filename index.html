@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- Insulin Dose Calculator — build v1.13.1 (release 1.13) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
+<!-- Insulin Dose Calculator — build v1.13.2 (release 1.13) · runtime version is owned by sw.js (cache key); this comment is for repo/deploy tracking so the file label matches the deployed worker. -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -1213,12 +1213,12 @@ const UI = (() => {
        caution      — outside the age Rule band (soft advisory) / past a calculation cap
        red X        — outside the hard field limit (should be unreachable; entries snap)
        hypo         — BG below the hypoglycemia threshold: dosing suppressed, rescue */
-  const STATE_ICON = {
-    grey:   "grey_check_32.gif",
-    green:  "green_check.gif",
-    caution:"yellow_caution_32.gif",
-    x:      "red_x_32.gif",
-    hypo:   "BG_Low_32.png"
+  const STATE_ICON = {                 // uniform 64px PNG set — no GIFs, no size drift
+    grey:   "grey_check_64.png",
+    green:  "green_check_64.png",
+    caution:"yellow_caution_64.png",
+    x:      "red_x_64.png",
+    hypo:   "BG_Low_64.png"
   };
   const STATE_ARIA = {
     grey:   "Loaded from order — tap to validate",

@@ -22,7 +22,7 @@
  *  · Non-GET / cross-origin (e.g. the optional result webhook) -> passthrough.
  * ===========================================================================*/
 
-const VERSION = "v1.13.1";         // cache key — bump every deploy (monotonic)
+const VERSION = "v1.13.2";         // cache key — bump every deploy (monotonic)
 const RELEASE = "1.13";            // committee-facing label shown in the footer
 const CACHE = `insulin-calc-${VERSION}`;
 
@@ -40,11 +40,11 @@ const PRECACHE = [
   "./Bedtime_216.png",
   "./Formula_216.png",
   "./clock_216.png",
-  "./grey_check_32.gif",
-  "./green_check.gif",
-  "./yellow_caution_32.gif",
-  "./red_x_32.gif",
-  "./BG_Low_32.png",
+  "./grey_check_64.png",
+  "./green_check_64.png",
+  "./yellow_caution_64.png",
+  "./red_x_64.png",
+  "./BG_Low_64.png",
   "./Overnight.png",
   "./Overnight_Q.png",
   "./Daytime_Q.png",
